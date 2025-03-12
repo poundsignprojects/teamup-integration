@@ -92,6 +92,7 @@ const SUB_CALENDAR_ZOOM_LINKS = {
   // Add your actual subcalendar ID from the logs (14156325)
   '14156325': 'Zoom Link for BC Powder: https://zoom.us/j/123456789',
   '14098383': 'Zoom Link for New Coffee Shop: https://zoom.us/j/123456789',
+  
   // Keep these as examples/backups
   '12345': 'Zoom Link for Team A: https://zoom.us/j/123456789',
   '67890': 'Zoom Link for Team B: https://zoom.us/j/987654321',
@@ -247,6 +248,27 @@ async function updateEventZoomLink(eventId, zoomLink) {
       const eventData = getResponse.data.event; // Extract from the "event" property
       console.log("Retrieved event properties:", Object.keys(eventData).join(', '));
       
+      // Handle multiple subcalendars properly
+      const currentSubcalendarIds = eventData.subcalendar_ids || [];
+      console.log("Current subcalendar IDs:", currentSubcalendarIds);
+      
+      // Convert our SUB_CALENDAR_ZOOM_LINKS keys to numbers for consistent comparison
+      const ourSubcalendarIds = Object.keys(SUB_CALENDAR_ZOOM_LINKS).map(id => Number(id));
+      
+      // Filter subcalendar IDs:
+      // 1. Keep all subcalendars NOT in our list
+      // 2. Keep ONE subcalendar from our list (the one that triggered this webhook)
+      const managedIds = currentSubcalendarIds.filter(id => ourSubcalendarIds.includes(id));
+      const otherIds = currentSubcalendarIds.filter(id => !ourSubcalendarIds.includes(id));
+      
+      // If we have managed IDs, keep the first one (should be the triggering ID)
+      const keepOneId = managedIds.length > 0 ? [managedIds[0]] : [];
+      
+      // Combine: IDs we're not managing + one ID we are managing
+      const finalSubcalendarIds = [...otherIds, ...keepOneId];
+      
+      console.log("Filtered subcalendar IDs:", finalSubcalendarIds);
+      
       // Format the Zoom link HTML
       const zoomLinkHtml = `<a href="${zoomLink}" target="_blank" rel="noreferrer noopener external">${zoomLink}</a>`;
       
@@ -269,7 +291,8 @@ async function updateEventZoomLink(eventId, zoomLink) {
         start_dt: eventData.start_dt,
         end_dt: eventData.end_dt,
         title: eventData.title,
-        subcalendar_id: eventData.subcalendar_id, // Add subcalendar_id (this is "Calendar" field)
+        subcalendar_id: finalSubcalendarIds[0], // Primary subcalendar ID
+        subcalendar_ids: finalSubcalendarIds,   // All subcalendar IDs
         custom: customFields
       };
       
