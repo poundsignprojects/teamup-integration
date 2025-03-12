@@ -51,53 +51,29 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
       html: zoomLink
     };
     
+    // Create a copy of all event data
+    const updateData = { ...eventData };
+    
+    // Update only the fields we want to change
+    updateData.custom = customFields;
+    updateData.subcalendar_ids = finalSubcalendarIds;
+    updateData.subcalendar_id = finalSubcalendarIds[0];
+    
     // For recurring events, we need to check what approach to use
-    // Try using series_id if available, otherwise use the direct event ID
     const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
     let updateUrl;
-    let updateData;
     
     if (eventData.series_id) {
       // If we have a series ID, try to update the entire series
       updateUrl = `${baseUrl}/events/${eventData.series_id}`;
       console.log(`Updating entire series with ID: ${eventData.series_id}`);
-      
-      updateData = {
-        id: eventData.series_id,
-        start_dt: eventData.start_dt,
-        end_dt: eventData.end_dt,
-        title: eventData.title,
-        subcalendar_id: finalSubcalendarIds[0], // Primary subcalendar ID
-        subcalendar_ids: finalSubcalendarIds,   // All subcalendar IDs
-        custom: customFields
-      };
+      updateData.id = eventData.series_id;
     } else {
       // Otherwise try using the standard approach
       updateUrl = `${baseUrl}/events/${eventData.id}`;
       console.log(`Updating single occurrence with ID: ${eventData.id}`);
-      
-      updateData = {
-        id: eventData.id,
-        start_dt: eventData.start_dt,
-        end_dt: eventData.end_dt,
-        title: eventData.title,
-        subcalendar_id: finalSubcalendarIds[0], // Primary subcalendar ID
-        subcalendar_ids: finalSubcalendarIds,   // All subcalendar IDs
-        custom: customFields
-      };
-      
-      // For recurring events, include the rrule if available
-      if (eventData.rrule) {
-        updateData.rrule = eventData.rrule;
-      }
+      updateData.id = eventData.id;
     }
-    
-    // Also include other important fields if they exist
-    if (eventData.who) updateData.who = eventData.who;
-    if (eventData.location) updateData.location = eventData.location;
-    if (eventData.notes) updateData.notes = eventData.notes;
-    if (eventData.tz) updateData.tz = eventData.tz;
-    if (eventData.all_day !== undefined) updateData.all_day = eventData.all_day;
     
     console.log(`Updating recurring event with payload:`, JSON.stringify(updateData, null, 2));
     
@@ -146,6 +122,9 @@ async function updateSingleOccurrence(eventData, zoomLink) {
     
     const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
     
+    // Create a copy of all event data
+    const updateData = { ...eventData };
+    
     // Create a proper copy of the custom fields
     const customFields = {};
     if (eventData.custom) {
@@ -159,22 +138,8 @@ async function updateSingleOccurrence(eventData, zoomLink) {
       html: zoomLink
     };
     
-    // Try a different endpoint for single occurrences
-    const updateData = {
-      id: eventData.id,
-      start_dt: eventData.start_dt,
-      end_dt: eventData.end_dt,
-      title: eventData.title,
-      subcalendar_id: eventData.subcalendar_id,
-      custom: customFields
-    };
-    
-    // Also include other important fields if they exist
-    if (eventData.who) updateData.who = eventData.who;
-    if (eventData.location) updateData.location = eventData.location;
-    if (eventData.notes) updateData.notes = eventData.notes;
-    if (eventData.tz) updateData.tz = eventData.tz;
-    if (eventData.all_day !== undefined) updateData.all_day = eventData.all_day;
+    // Update the custom fields in our data copy
+    updateData.custom = customFields;
     
     console.log(`Updating single occurrence with payload:`, JSON.stringify(updateData, null, 2));
     
