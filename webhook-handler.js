@@ -296,7 +296,7 @@ async function updateEventZoomLink(eventId, zoomLink) {
         id: eventId,
         start_dt: eventData.start_dt,
         end_dt: eventData.end_dt,
-        title: eventData.title,
+        title: eventData.title || '',
         subcalendar_id: finalSubcalendarIds[0], // Primary subcalendar ID
         subcalendar_ids: finalSubcalendarIds,   // All subcalendar IDs
         custom: customFields
@@ -355,7 +355,7 @@ async function updateEventZoomLink(eventId, zoomLink) {
   }
 }
 
-// Function to handle recurring events using webhook data directly
+// Function to handle recurring events using the three methods specified in the Teamup API docs
 async function updateRecurringEventZoomLink(eventData, zoomLink) {
   try {
     console.log(`Handling recurring event with ID ${eventData.id}...`);
@@ -371,17 +371,17 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
     const isInstanceId = String(eventData.id).includes('-rid-');
     console.log(`Is this an instance ID? ${isInstanceId}`);
     
-    // Log all available fields from webhook data
-    console.log('Available webhook data fields:', Object.keys(eventData).join(', '));
+    // Extract remote_id which is required for some update methods
+    const remoteId = eventData.remote_id;
+    const ristartDt = eventData.ristart_dt || eventData.start_dt;
     
-    // DIRECT APPROACH - Use the webhook data directly without fetching
-    // -------------------------------------------------------------------
+    console.log(`Remote ID: ${remoteId || 'Not found'}, ristart_dt: ${ristartDt || 'Not found'}`);
     
-    // METHOD 1: Using the webhook data directly with the event ID
+    // METHOD 1: Standard approach with event ID in path and body
+    // This is the first method described in the API docs
     try {
-      console.log(`Trying Direct Method 1: Using webhook data with event ID`);
+      console.log(`Trying Method 1: Path parameter eventId + matching id in body`);
       
-      // Create a proper copy of the custom fields
       const customFields = {};
       if (eventData.custom) {
         Object.keys(eventData.custom).forEach(key => {
@@ -390,35 +390,37 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
       }
       
       // Update our specific custom field
-      customFields[CUSTOM_FIELD_NAME] = { 
+      customFields[CUSTOM_FIELD_NAME] = {
         html: zoomLink
       };
       
-      // Create update payload directly from webhook data
+      // Create update payload with all required fields
       const updateData = {
         id: eventData.id,
         start_dt: eventData.start_dt,
         end_dt: eventData.end_dt,
-        title: eventData.title,
-        subcalendar_id: eventData.subcalendar_id,
+        title: eventData.title || '',
+        subcalendar_id: eventData.subcalendar_id,  // Required field
         custom: customFields
       };
       
-      // Add recurring event fields if available
+      // Add recurring event fields if this is a recurring event
       if (eventData.rrule) {
         updateData.rrule = eventData.rrule;
-        // Use start_dt as ristart_dt if not provided
-        updateData.ristart_dt = eventData.ristart_dt || eventData.start_dt;
-        // Specify we're only updating this instance
+        // If we have ristart_dt, include it
+        if (ristartDt) {
+          updateData.ristart_dt = ristartDt;
+        }
+        // Specify we're only updating this single occurrence
         updateData.redit = 'single';
       }
       
-      console.log(`Direct Method 1 update payload (sample fields):`, {
-        id: updateData.id,
-        start_dt: updateData.start_dt,
-        ristart_dt: updateData.ristart_dt,
-        redit: updateData.redit
-      });
+      // Include version if available
+      if (eventData.version) {
+        updateData.version = eventData.version;
+      }
+      
+      console.log(`Method 1 update payload:`, JSON.stringify(updateData, null, 2));
       
       const response = await axios.put(
         `${baseUrl}/events/${eventData.id}`,
@@ -431,109 +433,58 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
         }
       );
       
-      console.log(`Direct Method 1 successful! Status: ${response.status}`);
+      console.log(`Method 1 successful! Status: ${response.status}`);
       return true;
-    } catch (directMethod1Error) {
-      console.log(`Direct Method 1 failed: ${directMethod1Error.message}`);
-      console.log(`Status: ${directMethod1Error.response?.status}, Error: `, directMethod1Error.response?.data?.error || 'Unknown error');
+    } catch (method1Error) {
+      console.log(`Method 1 failed: ${method1Error.message}`);
       
-      // METHOD 2: Try to extract/construct an individual instance ID
-      try {
-        console.log(`Trying Direct Method 2: Using constructed instance ID`);
-        
-        // For recurring events, construct an instance ID if possible
-        // Format is typically: originalId-rid-timestamp
-        let instanceId = eventData.id;
-        
-        // If we have a start_dt and this isn't already an instance ID, try to construct one
-        if (eventData.start_dt && !isInstanceId) {
-          // Convert start_dt to a timestamp (assuming ISO format)
-          const startDate = new Date(eventData.start_dt);
-          const timestamp = Math.floor(startDate.getTime() / 1000);
-          instanceId = `${eventData.id}-rid-${timestamp}`;
-          console.log(`Constructed instance ID: ${instanceId}`);
-        }
-        
-        // Create a proper copy of the custom fields
-        const customFields = {};
-        if (eventData.custom) {
-          Object.keys(eventData.custom).forEach(key => {
-            customFields[key] = eventData.custom[key];
-          });
-        }
-        
-        // Update our specific custom field
-        customFields[CUSTOM_FIELD_NAME] = { 
-          html: zoomLink
-        };
-        
-        // Create update payload with the constructed instance ID
-        const updateData = {
-          id: instanceId,
-          start_dt: eventData.start_dt,
-          end_dt: eventData.end_dt,
-          title: eventData.title,
-          subcalendar_id: eventData.subcalendar_id,
-          custom: customFields
-        };
-        
-        // Add recurring event specific fields
-        if (eventData.rrule) {
-          updateData.redit = 'single';
-        }
-        
-        console.log(`Direct Method 2 update payload (sample fields):`, {
-          id: updateData.id,
-          start_dt: updateData.start_dt,
-          redit: updateData.redit
-        });
-        
-        const response = await axios.put(
-          `${baseUrl}/events/${instanceId}`,
-          updateData,
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              'Teamup-Token': TEAMUP_API_KEY
-            }
-          }
-        );
-        
-        console.log(`Direct Method 2 successful! Status: ${response.status}`);
-        return true;
-      } catch (directMethod2Error) {
-        console.log(`Direct Method 2 failed: ${directMethod2Error.message}`);
-        console.log(`Status: ${directMethod2Error.response?.status}, Error: `, directMethod2Error.response?.data?.error || 'Unknown error');
-        
-        // METHOD 3: Try minimal update with just ID and custom field
+      if (method1Error.response) {
+        console.log(`Status: ${method1Error.response.status}, Error:`, 
+          method1Error.response.data?.error || 'Unknown error');
+      }
+      
+      // If we don't have remote_id, we can't try methods 2 and 3
+      if (!remoteId) {
+        console.log(`Cannot proceed with Methods 2 and 3: Missing remote_id`);
+      } else {
+        // METHOD 2: Using remote_id + ristart_dt in the body
         try {
-          console.log(`Trying Direct Method 3: Minimal update with only custom field`);
+          console.log(`Trying Method 2: Using remote_id + ristart_dt in body`);
           
-          // Create a minimal payload
-          const minimalUpdateData = {
-            id: eventData.id,
-            custom: {
-              [CUSTOM_FIELD_NAME]: {
-                html: zoomLink
-              }
-            }
+          const customFields = {};
+          if (eventData.custom) {
+            Object.keys(eventData.custom).forEach(key => {
+              customFields[key] = eventData.custom[key];
+            });
+          }
+          
+          // Update our specific custom field
+          customFields[CUSTOM_FIELD_NAME] = {
+            html: zoomLink
           };
           
-          // If we have start/end dates, include them
-          if (eventData.start_dt) minimalUpdateData.start_dt = eventData.start_dt;
-          if (eventData.end_dt) minimalUpdateData.end_dt = eventData.end_dt;
+          // Create update payload with remote_id and ristart_dt
+          const updateData = {
+            remote_id: remoteId,
+            ristart_dt: ristartDt,
+            start_dt: eventData.start_dt,
+            end_dt: eventData.end_dt,
+            title: eventData.title || '',
+            subcalendar_id: eventData.subcalendar_id,
+            custom: customFields,
+            redit: 'single'  // Only update this instance
+          };
           
-          // Include recurring event fields if available
-          if (eventData.rrule) {
-            minimalUpdateData.ristart_dt = eventData.ristart_dt || eventData.start_dt;
-            minimalUpdateData.redit = 'single';
+          // Include version if available
+          if (eventData.version) {
+            updateData.version = eventData.version;
           }
           
-          console.log(`Direct Method 3 update payload: `, minimalUpdateData);
+          console.log(`Method 2 update payload:`, JSON.stringify(updateData, null, 2));
           
           const response = await axios.put(
-            `${baseUrl}/events/${eventData.id}`,
-            minimalUpdateData,
+            `${baseUrl}/events/${eventData.id}`,  // Still use the same URL
+            updateData,
             {
               headers: {
                 'Content-Type': 'application/json',
@@ -542,37 +493,51 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
             }
           );
           
-          console.log(`Direct Method 3 successful! Status: ${response.status}`);
+          console.log(`Method 2 successful! Status: ${response.status}`);
           return true;
-        } catch (directMethod3Error) {
-          console.log(`Direct Method 3 failed: ${directMethod3Error.message}`);
-          console.log(`Status: ${directMethod3Error.response?.status}, Error: `, directMethod3Error.response?.data?.error || 'Unknown error');
+        } catch (method2Error) {
+          console.log(`Method 2 failed: ${method2Error.message}`);
           
-          // METHOD 4: Try using a PATCH request instead of PUT
+          if (method2Error.response) {
+            console.log(`Status: ${method2Error.response.status}, Error:`, 
+              method2Error.response.data?.error || 'Unknown error');
+          }
+          
+          // METHOD 3: Using eventId=0 with remoteId + startTime as query parameters
           try {
-            console.log(`Trying Direct Method 4: Using PATCH for minimal changes`);
+            console.log(`Trying Method 3: Using eventId=0 with remoteId + startTime as query params`);
             
-            // Create a minimal payload for PATCH
-            const patchData = {
-              id: eventData.id,
-              custom: {
-                [CUSTOM_FIELD_NAME]: {
-                  html: zoomLink
-                }
-              }
-            };
-            
-            // Include recurring event fields if available
-            if (eventData.rrule) {
-              patchData.ristart_dt = eventData.ristart_dt || eventData.start_dt;
-              patchData.redit = 'single';
+            const customFields = {};
+            if (eventData.custom) {
+              Object.keys(eventData.custom).forEach(key => {
+                customFields[key] = eventData.custom[key];
+            });
             }
             
-            console.log(`Direct Method 4 PATCH payload: `, patchData);
+            // Update our specific custom field
+            customFields[CUSTOM_FIELD_NAME] = {
+              html: zoomLink
+            };
             
-            const response = await axios.patch(
-              `${baseUrl}/events/${eventData.id}`,
-              patchData,
+            // Create update payload (without remote_id and ristart_dt)
+            const updateData = {
+              start_dt: eventData.start_dt,
+              end_dt: eventData.end_dt,
+              title: eventData.title || '',
+              subcalendar_id: eventData.subcalendar_id,
+              custom: customFields,
+              redit: 'single'  // Only update this instance
+            };
+            
+            // Build the URL with query parameters
+            const updateUrl = `${baseUrl}/events/0?remoteId=${encodeURIComponent(remoteId)}&startTime=${encodeURIComponent(ristartDt)}`;
+            
+            console.log(`Method 3 URL: ${updateUrl}`);
+            console.log(`Method 3 update payload:`, JSON.stringify(updateData, null, 2));
+            
+            const response = await axios.put(
+              updateUrl,
+              updateData,
               {
                 headers: {
                   'Content-Type': 'application/json',
@@ -581,26 +546,32 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
               }
             );
             
-            console.log(`Direct Method 4 successful! Status: ${response.status}`);
+            console.log(`Method 3 successful! Status: ${response.status}`);
             return true;
-          } catch (directMethod4Error) {
-            console.log(`Direct Method 4 failed: ${directMethod4Error.message}`);
-            console.log(`Status: ${directMethod4Error.response?.status}, Error: `, directMethod4Error.response?.data?.error || 'Unknown error');
+          } catch (method3Error) {
+            console.log(`Method 3 failed: ${method3Error.message}`);
             
-            // All methods have failed
-            console.error('❌ RECURRING EVENT UPDATE FAILED - ALL METHODS EXHAUSTED');
-            console.error('DIAGNOSTICS:');
-            console.error(`Event ID: ${eventData.id}`);
-            console.error(`RRULE: ${eventData.rrule || 'Not found'}`);
-            console.error(`Start: ${eventData.start_dt || 'Not found'}`);
-            console.error(`End: ${eventData.end_dt || 'Not found'}`);
-            console.error(`Title: ${eventData.title || 'Not found'}`);
-            console.error(`SubCalendar: ${eventData.subcalendar_id || 'Not found'}`);
-            
-            return false;
+            if (method3Error.response) {
+              console.log(`Status: ${method3Error.response.status}, Error:`, 
+                method3Error.response.data?.error || 'Unknown error');
+            }
           }
         }
       }
+      
+      // If we reach this point, all methods have failed
+      console.error('❌ RECURRING EVENT UPDATE FAILED - ALL METHODS EXHAUSTED');
+      console.error('DIAGNOSTICS:');
+      console.error(`Event ID: ${eventData.id}`);
+      console.error(`Remote ID: ${remoteId || 'Not found'}`);
+      console.error(`RRULE: ${eventData.rrule || 'Not found'}`);
+      console.error(`Start: ${eventData.start_dt || 'Not found'}`);
+      console.error(`End: ${eventData.end_dt || 'Not found'}`);
+      console.error(`Title: ${eventData.title || 'Not found'}`);
+      console.error(`SubCalendar: ${eventData.subcalendar_id || 'Not found'}`);
+      console.error(`Error: The subcalendar likely has "no overlap" setting and treats instances of the same recurring event as overlapping.`);
+      
+      return false;
     }
   } catch (error) {
     console.error(`❌ Error in updateRecurringEventZoomLink: ${error.message}`);
