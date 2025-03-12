@@ -91,7 +91,7 @@ const CALENDAR_ID = getEnv('CALENDAR_ID');
 const SUB_CALENDAR_ZOOM_LINKS = {
   // Add your actual subcalendar ID from the logs (14156325)
   '14098383': 'New Coffee Shop: https://zoom.us/j/123456789',
-  '14098359': 'Integrity Group AKA Saturday Morning Workshop<br>\nhttps://us02web.zoom.us/j/82971629914?pwd=ajZBSkI4bmZjWVZpSXBmenJlMXhUUT09<br>\nMeeting ID: 829 7162 9914<br>\nPasscode: xs11Aw<br>\nCall in +13462487799<br>\nPassword: 836591<br>\nHost code: 983273<br>\nOne tap mobile +13462487799,82971629914,#,#,,836591# US (Houston)',
+  '14098359': 'Integrity Group AKA Saturday Morning Workshop<br>\n<a href="https://us02web.zoom.us/j/82971629914?pwd=ajZBSkI4bmZjWVZpSXBmenJlMXhUUT09">https://us02web.zoom.us/j/82971629914?pwd=ajZBSkI4bmZjWVZpSXBmenJlMXhUUT09</a><br>\nMeeting ID: 829 7162 9914<br>\nPasscode: xs11Aw<br>\nCall in +13462487799<br>\nPassword: 836591<br>\nHost code: 983273<br>\nOne tap mobile +13462487799,82971629914,#,#,,836591# US (Houston)',
   '14098366': 'DJ Zoom: https://zoom.us/j/123456789',
   '14156325': 'BC Powder: https://zoom.us/j/123456789',
   '14098372': 'Power Lunch: https://zoom.us/j/123456789',
@@ -275,8 +275,8 @@ async function updateEventZoomLink(eventId, zoomLink) {
       
       console.log("Filtered subcalendar IDs:", finalSubcalendarIds);
       
-      // Format the Zoom link HTML
-      const zoomLinkHtml = `<a href="${zoomLink}" target="_blank" rel="noreferrer noopener external">${zoomLink}</a>`;
+      // No HTML formatting - just use the raw link
+      const zoomLinkValue = zoomLink;
       
       // Create a proper copy of the custom fields
       const customFields = {};
@@ -286,9 +286,9 @@ async function updateEventZoomLink(eventId, zoomLink) {
         });
       }
       
-      // Update our specific custom field - use the same structure as original
+      // Update our specific custom field with the raw value
       customFields[CUSTOM_FIELD_NAME] = {
-        html: zoomLinkHtml
+        html: zoomLinkValue
       };
       
       // Create the update payload with all required fields
