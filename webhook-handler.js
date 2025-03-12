@@ -1,413 +1,4 @@
-// Helper function to update a single occurrence if series update fails
-async function updateSingleOccurrence(eventData, zoomLink) {
-  try {
-    console.log(`Attempting to update single occurrence of recurring event ${eventData.id}...`);
-    
-    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
-    
-    // Create a proper copy of the custom fields
-    const customFields = {};
-    if (eventData.custom) {
-      Object.keys(eventData.custom).forEach(key => {
-        customFields[key] = eventData.custom[key];
-      });
-    }
-    
-    // Update our specific custom field with raw link
-    customFields[CUSTOM_FIELD_NAME] = {
-      html: zoomLink
-    };
-    
-    // Try a different endpoint for single occurrences - just update the custom field
-    const updateData = {
-      id: eventData.id,
-      custom: customFields
-    };
-    
-    console.log(`Updating single occurrence with payload:`, JSON.stringify(updateData, null, 2));
-    
-    // Try PATCH first (partial update)
-    try {
-      const updateResponse = await axios.patch(
-        `${baseUrl}/events/${eventData.id}`,
-        updateData,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Teamup-Token': TEAMUP_API_KEY
-          }
-        }
-      );
-      
-      console.log(`API response status: ${updateResponse.status}`);
-      return true;
-    } catch (patchError) {
-      // If PATCH fails, use PUT with the minimal required fields
-      console.log('PATCH failed, trying minimal PUT...');
-      
-      const putData = {
-        id: eventData.id,
-        start_dt: eventData.start_dt,
-        end_dt: eventData.end_dt,
-        title: eventData.title,
-        subcalendar_id: eventData.subcalendar_id,
-        custom: customFields
-      };
-      
-      // Use start_dt for ristart_dt if it's a recurring event
-      if (eventData.rrule) {
-        putData.ristart_dt = eventData.start_dt;
-      }
-      
-      const putResponse = await axios.put(
-        `${baseUrl}/events/${eventData.id}`,
-        putData,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Teamup-Token': TEAMUP_API_KEY
-          }
-        }
-      );
-      
-      console.log(`PUT response status: ${putResponse.status}`);
-      return true;
-    }
-  } catch (error) {
-    console.error('❌ Error updating single occurrence:', error.message);
-    return false;
-  }
-}// Function to handle recurring events - uses event data directly from webhook
-async function updateRecurringEventZoomLink(eventData, zoomLink) {
-  try {
-    console.log(`Handling recurring event with ID ${eventData.id}...`);
-    
-    // Check required environment variables
-    if (!CALENDAR_ID) {
-      console.error('❌ CALENDAR_ID environment variable is not set');
-      return false;
-    }
-    
-    if (!TEAMUP_API_KEY) {
-      console.error('❌ TEAMUP_API_KEY environment variable is not set');
-      return false;
-    }
-    
-    // Create a proper copy of the custom fields
-    const customFields = {};
-    if (eventData.custom) {
-      Object.keys(eventData.custom).forEach(key => {
-        customFields[key] = eventData.custom[key];
-      });
-    }
-    
-    // Update our specific custom field with the raw link value
-    customFields[CUSTOM_FIELD_NAME] = {
-      html: zoomLink
-    };
-    
-    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
-    
-    // Try the absolute minimal approach first - just update the custom field
-    console.log(`Trying ultra-minimal update with only the custom field...`);
-    
-    const minimalUpdateData = {
-      id: eventData.id,
-      custom: customFields
-    };
-    
-    console.log(`Ultra-minimal update payload:`, JSON.stringify(minimalUpdateData, null, 2));
-    
-    try {
-      const response = await axios.put(
-        `${baseUrl}/events/${eventData.id}`,
-        minimalUpdateData,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Teamup-Token': TEAMUP_API_KEY
-          }
-        }
-      );
-      
-      console.log(`API response status: ${response.status}`);
-      return true;
-    } catch (minimalError) {
-      console.log(`Ultra-minimal update failed:`, minimalError.message);
-      
-      if (minimalError.response) {
-        console.log('Response status:', minimalError.response.status);
-        console.log('Response data:', JSON.stringify(minimalError.response.data || {}));
-        
-        // If we get a specific error about missing fields, try a more complete update
-        if (minimalError.response.data?.error?.id === 'incomplete_request' || 
-            minimalError.response.data?.error?.id === 'event_missing_start_end_datetime') {
-          return await tryCompleteUpdate(eventData, zoomLink);
-        }
-      }
-      
-      // For most other errors, we'll try a middle-ground approach
-      console.log(`Trying middle-ground approach...`);
-      return await tryMiddleGroundUpdate(eventData, zoomLink);
-    }
-  } catch (error) {
-    console.error('❌ Error in updateRecurringEventZoomLink function:', error.message || error);
-    return false;
-  }
-}
-
-// Try a middle ground approach - keep original event data but change custom field
-async function tryMiddleGroundUpdate(eventData, zoomLink) {
-  try {
-    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
-    
-    // First, get the latest version of the event
-    console.log(`Getting latest event data...`);
-    
-    const getResponse = await axios.get(
-      `${baseUrl}/events/${eventData.id}`,
-      {
-        headers: {
-          'Teamup-Token': TEAMUP_API_KEY
-        }
-      }
-    );
-    
-    // Get the current event data
-    const currentEvent = getResponse.data.event;
-    console.log(`Successfully retrieved current event data`);
-    
-    // Only update the custom field
-    if (!currentEvent.custom) {
-      currentEvent.custom = {};
-    }
-    
-    // Update our specific custom field
-    currentEvent.custom[CUSTOM_FIELD_NAME] = {
-      html: zoomLink
-    };
-    
-    // Make a PUT request with the modified event data
-    console.log(`Updating event with modified custom field...`);
-    
-    const updateResponse = await axios.put(
-      `${baseUrl}/events/${eventData.id}`,
-      currentEvent,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Teamup-Token': TEAMUP_API_KEY
-        }
-      }
-    );
-    
-    console.log(`API response status: ${updateResponse.status}`);
-    return true;
-  } catch (error) {
-    console.error('❌ Middle-ground update failed:', error.message);
-    
-    if (error.response) {
-      console.error('Status:', error.response.status);
-      console.error('Error data:', JSON.stringify(error.response.data || {}));
-    }
-    
-    return false;
-  }
-}
-
-// Try a complete update with all fields
-async function tryCompleteUpdate(eventData, zoomLink) {
-  try {
-    console.log(`Trying complete update with all fields...`);
-    
-    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
-    
-    // Create a proper copy of the custom fields
-    const customFields = {};
-    if (eventData.custom) {
-      Object.keys(eventData.custom).forEach(key => {
-        customFields[key] = eventData.custom[key];
-      });
-    }
-    
-    // Update our specific custom field
-    customFields[CUSTOM_FIELD_NAME] = {
-      html: zoomLink
-    };
-    
-    // Create a complete update payload
-    const updateData = {
-      id: eventData.id,
-      title: eventData.title,
-      start_dt: eventData.start_dt,
-      end_dt: eventData.end_dt,
-      subcalendar_id: eventData.subcalendar_id,
-      custom: customFields
-    };
-    
-    // Add recurrence fields if present
-    if (eventData.rrule) {
-      updateData.rrule = eventData.rrule;
-      updateData.ristart_dt = eventData.start_dt; // Use start_dt as ristart_dt
-    }
-    
-    // Add other important fields
-    if (eventData.who) updateData.who = eventData.who;
-    if (eventData.tz) updateData.tz = eventData.tz;
-    if (eventData.all_day !== undefined) updateData.all_day = eventData.all_day;
-    
-    console.log(`Complete update payload:`, JSON.stringify(updateData, null, 2));
-    
-    const response = await axios.put(
-      `${baseUrl}/events/${eventData.id}`,
-      updateData,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Teamup-Token': TEAMUP_API_KEY
-        }
-      }
-    );
-    
-    console.log(`API response status: ${response.status}`);
-    return true;
-  } catch (error) {
-    console.error('❌ Complete update failed:', error.message);
-    
-    if (error.response) {
-      console.error('Status:', error.response.status);
-      console.error('Error data:', JSON.stringify(error.response.data || {}));
-    }
-    
-    // If this fails too, log specific guidance
-    console.log('🔄 Unable to update recurring event directly. Users will need to manually add Zoom links for recurring events with this subcalendar.');
-    
-    return false;
-  }
-}
-
-// Last resort update approach
-async function lastResortUpdate(eventData, zoomLink, errorId) {
-  try {
-    console.log(`Attempting last resort update for error: ${errorId}`);
-    
-    // If it's a scheduling conflict, we won't be able to update the event
-    if (errorId === 'event_overlapping') {
-      console.log('⚠️ Scheduling conflict detected. Attempting to update only the custom field without changing other properties.');
-      
-      // Try one more approach - just update the custom field via a GET and PUT without changing anything else
-      try {
-        // First, get the latest version of the event
-        const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
-        const getResponse = await axios.get(
-          `${baseUrl}/events/${eventData.id}`,
-          {
-            headers: {
-              'Teamup-Token': TEAMUP_API_KEY
-            }
-          }
-        );
-        
-        // Get the current event data
-        const currentEvent = getResponse.data.event;
-        
-        // Only update the custom field
-        if (!currentEvent.custom) {
-          currentEvent.custom = {};
-        }
-        
-        // Update our specific custom field
-        currentEvent.custom[CUSTOM_FIELD_NAME] = {
-          html: zoomLink
-        };
-        
-        // Make a copy of all fields without modification
-        const updateData = { ...currentEvent };
-        
-        console.log(`Minimal update with only custom field change:`, JSON.stringify(updateData.custom, null, 2));
-        
-        // Try the update
-        const updateResponse = await axios.put(
-          `${baseUrl}/events/${eventData.id}`,
-          updateData,
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              'Teamup-Token': TEAMUP_API_KEY
-            }
-          }
-        );
-        
-        console.log(`API response status: ${updateResponse.status}`);
-        return true;
-      } catch (error) {
-        console.log('❌ Unable to update event due to scheduling conflict. Zoom link cannot be added.');
-        return false;
-      }
-    }
-    
-    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
-    
-    // Create a proper copy of the custom fields
-    const customFields = {};
-    if (eventData.custom) {
-      Object.keys(eventData.custom).forEach(key => {
-        customFields[key] = eventData.custom[key];
-      });
-    }
-    
-    // Update our specific custom field with the raw link value
-    customFields[CUSTOM_FIELD_NAME] = {
-      html: zoomLink
-    };
-    
-    // Create a very minimal payload - just the absolute essentials
-    const updateData = {
-      id: eventData.id,
-      title: eventData.title,
-      start_dt: eventData.start_dt,
-      end_dt: eventData.end_dt,
-      subcalendar_id: eventData.subcalendar_id,
-      custom: customFields
-    };
-    
-    // Special handling for specific errors
-    if (errorId === 'incomplete_request' || errorId === 'event_missing_start_end_datetime') {
-      updateData.ristart_dt = eventData.start_dt;
-      
-      // If start_dt and end_dt are in different time zones, normalize them
-      if (eventData.tz) {
-        updateData.tz = eventData.tz;
-      }
-    }
-    
-    console.log(`Last resort update with payload:`, JSON.stringify(updateData, null, 2));
-    
-    const updateResponse = await axios.put(
-      `${baseUrl}/events/${eventData.id}`,
-      updateData,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Teamup-Token': TEAMUP_API_KEY
-        }
-      }
-    );
-    
-    console.log(`API response status: ${updateResponse.status}`);
-    return true;
-  } catch (error) {
-    console.error('❌ Last resort update failed:', error.message);
-    
-    // Log the full error details
-    if (error.response) {
-      console.error('Status:', error.response.status);
-      console.error('Error data:', JSON.stringify(error.response.data || {}));
-    }
-    
-    return false;
-  }
-}// Teamup Webhook Handler
+// Teamup Webhook Handler
 // For Express.js on Vercel, Netlify, etc.
 
 const express = require('express');
@@ -630,7 +221,7 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Function to update the Zoom link for an event
+// Function to update the Zoom link for a regular event
 async function updateEventZoomLink(eventId, zoomLink) {
   try {
     console.log(`Attempting to update event ${eventId} with Zoom link...`);
@@ -692,20 +283,12 @@ async function updateEventZoomLink(eventId, zoomLink) {
       
       console.log("Filtered subcalendar IDs:", finalSubcalendarIds);
       
-      // No HTML formatting - just use the raw link
-      const zoomLinkValue = zoomLink;
-      
       // Create a proper copy of the custom fields
-      const customFields = {};
-      if (eventData.custom) {
-        Object.keys(eventData.custom).forEach(key => {
-          customFields[key] = eventData.custom[key];
-        });
-      }
+      const customFields = copyCustomFields(eventData.custom);
       
-      // Update our specific custom field with the raw value
+      // Update our specific custom field with the HTML-formatted link
       customFields[CUSTOM_FIELD_NAME] = {
-        html: zoomLinkValue
+        html: zoomLink
       };
       
       // Create the update payload with all required fields
@@ -770,6 +353,395 @@ async function updateEventZoomLink(eventId, zoomLink) {
     console.error('❌ Error in updateEventZoomLink function:', error.message || error);
     return false;
   }
+}
+
+// Function to handle recurring events - uses event data directly from webhook
+async function updateRecurringEventZoomLink(eventData, zoomLink) {
+  try {
+    console.log(`Handling recurring event with ID ${eventData.id}...`);
+    
+    // Check required environment variables
+    if (!CALENDAR_ID || !TEAMUP_API_KEY) {
+      console.error('❌ Missing required environment variables');
+      return false;
+    }
+    
+    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
+    
+    // Create a proper copy of the custom fields
+    const customFields = copyCustomFields(eventData.custom);
+    
+    // Update our specific custom field with the HTML-formatted link
+    customFields[CUSTOM_FIELD_NAME] = {
+      html: zoomLink
+    };
+    
+    // Try the different update strategies in sequence
+    
+    // 1. Try minimal update first (just the custom field)
+    console.log(`Trying minimal update with only the custom field...`);
+    
+    const minimalUpdateData = {
+      id: eventData.id,
+      custom: customFields
+    };
+    
+    try {
+      const response = await makeApiRequest(
+        `${baseUrl}/events/${eventData.id}`,
+        minimalUpdateData
+      );
+      
+      console.log(`Minimal update successful! API response status: ${response.status}`);
+      return true;
+    } catch (minimalError) {
+      console.log(`Minimal update failed: ${minimalError.message}`);
+      
+      const errorId = minimalError.response?.data?.error?.id;
+      
+      // 2. Try a complete update if the minimal update failed
+      if (errorId === 'incomplete_request' || errorId === 'event_missing_start_end_datetime') {
+        return await tryCompleteUpdate(eventData, zoomLink);
+      }
+      
+      // 3. Try a middle-ground approach for other errors
+      return await tryMiddleGroundUpdate(eventData, zoomLink);
+    }
+  } catch (error) {
+    console.error('❌ Error in updateRecurringEventZoomLink function:', error.message || error);
+    return false;
+  }
+}
+
+// Try a complete update with all fields
+async function tryCompleteUpdate(eventData, zoomLink) {
+  try {
+    console.log(`Trying complete update with all fields...`);
+    
+    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
+    
+    // Create a proper copy of the custom fields
+    const customFields = copyCustomFields(eventData.custom);
+    
+    // Update our specific custom field
+    customFields[CUSTOM_FIELD_NAME] = {
+      html: zoomLink
+    };
+    
+    // Create a complete update payload
+    const updateData = {
+      id: eventData.id,
+      title: eventData.title,
+      start_dt: eventData.start_dt,
+      end_dt: eventData.end_dt,
+      subcalendar_id: eventData.subcalendar_id,
+      custom: customFields
+    };
+    
+    // Add recurrence fields if present
+    if (eventData.rrule) {
+      updateData.rrule = eventData.rrule;
+      updateData.ristart_dt = eventData.start_dt; // Use start_dt as ristart_dt
+      updateData.redit = 'single'; // Only update this occurrence
+    }
+    
+    // Add other important fields
+    if (eventData.who) updateData.who = eventData.who;
+    if (eventData.tz) updateData.tz = eventData.tz;
+    if (eventData.all_day !== undefined) updateData.all_day = eventData.all_day;
+    
+    console.log(`Complete update payload:`, JSON.stringify(updateData, null, 2));
+    
+    try {
+      const response = await makeApiRequest(
+        `${baseUrl}/events/${eventData.id}`,
+        updateData
+      );
+      
+      console.log(`Complete update successful! API response status: ${response.status}`);
+      return true;
+    } catch (error) {
+      console.error('❌ Complete update failed:', error.message);
+      
+      // If this fails, try the single occurrence update
+      return await updateSingleOccurrence(eventData, zoomLink);
+    }
+  } catch (error) {
+    console.error('❌ Error in tryCompleteUpdate function:', error.message || error);
+    return false;
+  }
+}
+
+// Try a middle ground approach - keep original event data but change custom field
+async function tryMiddleGroundUpdate(eventData, zoomLink) {
+  try {
+    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
+    
+    // First, get the latest version of the event
+    console.log(`Getting latest event data...`);
+    
+    try {
+      const getResponse = await axios.get(
+        `${baseUrl}/events/${eventData.id}`,
+        {
+          headers: {
+            'Teamup-Token': TEAMUP_API_KEY
+          }
+        }
+      );
+      
+      // Get the current event data
+      const currentEvent = getResponse.data.event;
+      console.log(`Successfully retrieved current event data`);
+      
+      // Only update the custom field
+      if (!currentEvent.custom) {
+        currentEvent.custom = {};
+      }
+      
+      // Update our specific custom field
+      currentEvent.custom[CUSTOM_FIELD_NAME] = {
+        html: zoomLink
+      };
+      
+      // Make a PUT request with the modified event data
+      console.log(`Updating event with modified custom field...`);
+      
+      const response = await makeApiRequest(
+        `${baseUrl}/events/${eventData.id}`,
+        currentEvent
+      );
+      
+      console.log(`Middle-ground update successful! API response status: ${response.status}`);
+      return true;
+    } catch (error) {
+      console.error('❌ Middle-ground update failed:', error.message);
+      
+      // Try single occurrence update as a last resort
+      return await updateSingleOccurrence(eventData, zoomLink);
+    }
+  } catch (error) {
+    console.error('❌ Error in tryMiddleGroundUpdate function:', error.message || error);
+    return false;
+  }
+}
+
+// Helper function to update a single occurrence if series update fails
+async function updateSingleOccurrence(eventData, zoomLink) {
+  try {
+    console.log(`Attempting to update single occurrence of recurring event ${eventData.id}...`);
+    
+    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
+    
+    // Create a proper copy of the custom fields
+    const customFields = copyCustomFields(eventData.custom);
+    
+    // Update our specific custom field with raw link
+    customFields[CUSTOM_FIELD_NAME] = {
+      html: zoomLink
+    };
+    
+    // Try PATCH first (partial update)
+    try {
+      console.log(`Trying PATCH method for single occurrence...`);
+      
+      const updateData = {
+        id: eventData.id,
+        custom: customFields
+      };
+      
+      const response = await axios.patch(
+        `${baseUrl}/events/${eventData.id}`,
+        updateData,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Teamup-Token': TEAMUP_API_KEY
+          }
+        }
+      );
+      
+      console.log(`PATCH successful! API response status: ${response.status}`);
+      return true;
+    } catch (patchError) {
+      // If PATCH fails, use PUT with the minimal required fields
+      console.log('PATCH failed, trying minimal PUT...');
+      
+      const putData = {
+        id: eventData.id,
+        start_dt: eventData.start_dt,
+        end_dt: eventData.end_dt,
+        title: eventData.title,
+        subcalendar_id: eventData.subcalendar_id,
+        custom: customFields
+      };
+      
+      // Use start_dt for ristart_dt if it's a recurring event
+      if (eventData.rrule) {
+        putData.ristart_dt = eventData.start_dt;
+        putData.redit = 'single'; // Only update this occurrence
+      }
+      
+      try {
+        const response = await makeApiRequest(
+          `${baseUrl}/events/${eventData.id}`,
+          putData
+        );
+        
+        console.log(`PUT successful! API response status: ${response.status}`);
+        return true;
+      } catch (putError) {
+        console.error('❌ PUT failed:', putError.message);
+        
+        // Last resort - try with scheduling conflict handling
+        return await lastResortUpdate(
+          eventData, 
+          zoomLink, 
+          putError.response?.data?.error?.id
+        );
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error in updateSingleOccurrence function:', error.message || error);
+    return false;
+  }
+}
+
+// Last resort update approach
+async function lastResortUpdate(eventData, zoomLink, errorId) {
+  try {
+    console.log(`Attempting last resort update for error: ${errorId}`);
+    
+    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
+    
+    // If it's a scheduling conflict, we won't be able to update the event
+    if (errorId === 'event_overlapping') {
+      console.log('⚠️ Scheduling conflict detected. Attempting to update only the custom field without changing other properties.');
+      
+      // Try one more approach - just update the custom field via a GET and PUT without changing anything else
+      try {
+        // First, get the latest version of the event
+        const getResponse = await axios.get(
+          `${baseUrl}/events/${eventData.id}`,
+          {
+            headers: {
+              'Teamup-Token': TEAMUP_API_KEY
+            }
+          }
+        );
+        
+        // Get the current event data
+        const currentEvent = getResponse.data.event;
+        
+        // Only update the custom field
+        if (!currentEvent.custom) {
+          currentEvent.custom = {};
+        }
+        
+        // Update our specific custom field
+        currentEvent.custom[CUSTOM_FIELD_NAME] = {
+          html: zoomLink
+        };
+        
+        // Make a copy of all fields without modification
+        const updateData = { ...currentEvent };
+        
+        console.log(`Minimal update with only custom field change:`, JSON.stringify(updateData.custom, null, 2));
+        
+        // Try the update
+        const response = await makeApiRequest(
+          `${baseUrl}/events/${eventData.id}`,
+          updateData
+        );
+        
+        console.log(`Last resort update successful! API response status: ${response.status}`);
+        return true;
+      } catch (error) {
+        console.log('❌ Unable to update event due to scheduling conflict. Zoom link cannot be added.');
+        return false;
+      }
+    }
+    
+    // Create a proper copy of the custom fields
+    const customFields = copyCustomFields(eventData.custom);
+    
+    // Update our specific custom field with the raw link value
+    customFields[CUSTOM_FIELD_NAME] = {
+      html: zoomLink
+    };
+    
+    // Create a very minimal payload - just the absolute essentials
+    const updateData = {
+      id: eventData.id,
+      title: eventData.title,
+      start_dt: eventData.start_dt,
+      end_dt: eventData.end_dt,
+      subcalendar_id: eventData.subcalendar_id,
+      custom: customFields
+    };
+    
+    // Special handling for specific errors
+    if (errorId === 'incomplete_request' || errorId === 'event_missing_start_end_datetime') {
+      updateData.ristart_dt = eventData.start_dt;
+      
+      // If start_dt and end_dt are in different time zones, normalize them
+      if (eventData.tz) {
+        updateData.tz = eventData.tz;
+      }
+    }
+    
+    console.log(`Last resort update with payload:`, JSON.stringify(updateData, null, 2));
+    
+    try {
+      const response = await makeApiRequest(
+        `${baseUrl}/events/${eventData.id}`,
+        updateData
+      );
+      
+      console.log(`Last resort update successful! API response status: ${response.status}`);
+      return true;
+    } catch (error) {
+      console.error('❌ Last resort update failed:', error.message);
+      
+      // Log the full error details
+      if (error.response) {
+        console.error('Status:', error.response.status);
+        console.error('Error data:', JSON.stringify(error.response.data || {}));
+      }
+      
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ Error in lastResortUpdate function:', error.message || error);
+    return false;
+  }
+}
+
+// Helper function to make API requests
+async function makeApiRequest(url, data) {
+  return await axios.put(
+    url,
+    data,
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        'Teamup-Token': TEAMUP_API_KEY
+      }
+    }
+  );
+}
+
+// Helper function to safely copy custom fields
+function copyCustomFields(customData) {
+  const customFields = {};
+  
+  if (customData) {
+    Object.keys(customData).forEach(key => {
+      customFields[key] = customData[key];
+    });
+  }
+  
+  return customFields;
 }
 
 // For local testing
