@@ -6,6 +6,46 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 const app = express();
 
+// Configurable logging
+const ENABLE_LOGGING = process.env.ENABLE_LOGGING !== 'false'; // Enabled by default unless explicitly set to 'false'
+const LOG_LEVEL = process.env.LOG_LEVEL || 'info'; // Default to 'info' if not specified
+
+// Simple logging utility
+const logger = {
+  levels: {
+    error: 0,
+    warn: 1,
+    info: 2,
+    debug: 3,
+    trace: 4
+  },
+  
+  shouldLog(level) {
+    if (!ENABLE_LOGGING) return false;
+    return this.levels[level] <= this.levels[LOG_LEVEL];
+  },
+  
+  error(...args) {
+    if (this.shouldLog('error')) console.error('❌', ...args);
+  },
+  
+  warn(...args) {
+    if (this.shouldLog('warn')) console.warn('⚠️', ...args);
+  },
+  
+  info(...args) {
+    if (this.shouldLog('info')) console.log('ℹ️', ...args);
+  },
+  
+  debug(...args) {
+    if (this.shouldLog('debug')) console.log('🔍', ...args);
+  },
+  
+  trace(...args) {
+    if (this.shouldLog('trace')) console.log('📋', ...args);
+  }
+};
+
 // Your Teamup API key
 const TEAMUP_API_KEY = process.env.TEAMUP_API_KEY;
 // Your calendar ID
@@ -24,13 +64,15 @@ app.use(bodyParser.json());
 // Endpoint to receive Teamup webhooks
 app.post('/webhook', async (req, res) => {
   try {
-    console.log('🔔 Webhook triggered at:', new Date().toISOString());
+    logger.info('Webhook triggered at:', new Date().toISOString());
     
     const eventData = req.body;
     
     // Log the complete webhook payload
-    console.log('📦 Webhook payload:');
-    console.log(JSON.stringify(eventData, null, 2));
+    logger.debug('Webhook payload:');
+    if (logger.shouldLog('debug')) {
+      console.log(JSON.stringify(eventData, null, 2));
+    }
     
     // Check if this is an event creation or update
     if (eventData.action === 'event.create' || eventData.action === 'event.update') {
@@ -43,23 +85,25 @@ app.post('/webhook', async (req, res) => {
       if (zoomLink) {
         // Update the event with the Zoom link
         await updateEventZoomLink(eventId, zoomLink);
-        console.log(`✅ Updated event ${eventId} with Zoom link for sub-calendar ${subCalendarId}`);
+        logger.info(`Updated event ${eventId} with Zoom link for sub-calendar ${subCalendarId}`);
       } else {
-        console.log(`⚠️ No Zoom link configured for sub-calendar ${subCalendarId}`);
+        logger.warn(`No Zoom link configured for sub-calendar ${subCalendarId}`);
       }
       
       // Log event fields for detailed debugging
-      console.log('🔍 Event details:');
-      for (const [key, value] of Object.entries(eventData.event)) {
-        console.log(`  ${key}: ${JSON.stringify(value)}`);
+      logger.debug('Event details:');
+      if (logger.shouldLog('debug')) {
+        for (const [key, value] of Object.entries(eventData.event)) {
+          console.log(`  ${key}: ${JSON.stringify(value)}`);
+        }
       }
     }
     
     // Always return a 200 response to Teamup quickly
     res.status(200).send('Webhook received');
   } catch (error) {
-    console.error('❌ Error processing webhook:', error);
-    console.error('Error details:', {
+    logger.error('Error processing webhook:', error);
+    logger.error('Error details:', {
       message: error.message,
       stack: error.stack,
       requestBody: req.body
@@ -82,6 +126,8 @@ async function updateEventZoomLink(eventId, zoomLink) {
       }
     };
     
+    logger.debug(`Making API request to ${url}`);
+    
     // Make the API request to update the event
     await axios.put(url, updateData, {
       headers: {
@@ -90,9 +136,10 @@ async function updateEventZoomLink(eventId, zoomLink) {
       }
     });
     
+    logger.debug(`Successfully updated event ${eventId}`);
     return true;
   } catch (error) {
-    console.error('Error updating event:', error);
+    logger.error('Error updating event:', error);
     return false;
   }
 }
@@ -101,7 +148,8 @@ async function updateEventZoomLink(eventId, zoomLink) {
 if (require.main === module) {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    logger.info(`Server running on port ${PORT}`);
+    logger.info(`Logging enabled: ${ENABLE_LOGGING}, level: ${LOG_LEVEL}`);
   });
 }
 

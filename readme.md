@@ -78,6 +78,51 @@ Add your deployment URL to your Teamup calendar webhook settings.
 
 Edit the `SUB_CALENDAR_ZOOM_LINKS` object in `webhook-handler.js` to map your sub-calendar IDs to their corresponding Zoom links.
 
+
+# Environment Variables
+
+Add the following variables to your `.env` file for configuration:
+
+## Required Variables
+
+- `TEAMUP_API_KEY` - Your Teamup API key for authentication
+- `CALENDAR_ID` - The ID of your Teamup calendar
+
+## Logging Configuration
+
+- `ENABLE_LOGGING` - Controls whether logging is enabled
+  - Set to `"true"` to enable logging (default)
+  - Set to `"false"` to disable all logging
+
+- `LOG_LEVEL` - Controls the verbosity of logs when enabled
+  - `"error"` - Only log errors (least verbose)
+  - `"warn"` - Log errors and warnings
+  - `"info"` - Log errors, warnings, and general information (default)
+  - `"debug"` - Log errors, warnings, info, and detailed debug information
+  - `"trace"` - Log everything including highly detailed trace information (most verbose)
+
+## Example `.env` file
+
+```
+# Required credentials
+TEAMUP_API_KEY=k73jd92lsm56dn2k
+CALENDAR_ID=ks73ndla9
+
+# Logging configuration
+ENABLE_LOGGING=true
+LOG_LEVEL=info
+```
+
+## Setting Environment Variables on Vercel
+
+To set environment variables on Vercel:
+
+1. Go to your project on the Vercel dashboard
+2. Click on "Settings"
+3. Click on "Environment Variables"
+4. Add each variable and its value
+5. Deploy your application to apply the changes
+
 ## License
 
 [MIT](LICENSE)
