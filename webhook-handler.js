@@ -1,4 +1,201 @@
-// Teamup Webhook Handler
+// Function to handle recurring events - uses event data directly from webhook
+async function updateRecurringEventZoomLink(eventData, zoomLink) {
+  try {
+    console.log(`Handling recurring event with ID ${eventData.id}...`);
+    
+    // Check required environment variables
+    if (!CALENDAR_ID) {
+      console.error('❌ CALENDAR_ID environment variable is not set');
+      return false;
+    }
+    
+    if (!TEAMUP_API_KEY) {
+      console.error('❌ TEAMUP_API_KEY environment variable is not set');
+      return false;
+    }
+    
+    // For recurring events, we'll use the event data directly from the webhook
+    // instead of trying to fetch it, which might fail with a 404
+    
+    // Handle multiple subcalendars properly
+    const currentSubcalendarIds = eventData.subcalendar_ids || [];
+    console.log("Current subcalendar IDs:", currentSubcalendarIds);
+    
+    // Convert our SUB_CALENDAR_ZOOM_LINKS keys to numbers for consistent comparison
+    const ourSubcalendarIds = Object.keys(SUB_CALENDAR_ZOOM_LINKS).map(id => Number(id));
+    
+    // Filter subcalendar IDs:
+    // 1. Keep all subcalendars NOT in our list
+    // 2. Keep ONE subcalendar from our list (the one that triggered this webhook)
+    const managedIds = currentSubcalendarIds.filter(id => ourSubcalendarIds.includes(id));
+    const otherIds = currentSubcalendarIds.filter(id => !ourSubcalendarIds.includes(id));
+    
+    // If we have managed IDs, keep the first one (should be the triggering ID)
+    const keepOneId = managedIds.length > 0 ? [managedIds[0]] : [];
+    
+    // Combine: IDs we're not managing + one ID we are managing
+    const finalSubcalendarIds = [...otherIds, ...keepOneId];
+    
+    console.log("Filtered subcalendar IDs:", finalSubcalendarIds);
+    
+    // Create a proper copy of the custom fields
+    const customFields = {};
+    if (eventData.custom) {
+      Object.keys(eventData.custom).forEach(key => {
+        customFields[key] = eventData.custom[key];
+      });
+    }
+    
+    // Update our specific custom field with the raw link value
+    customFields[CUSTOM_FIELD_NAME] = {
+      html: zoomLink
+    };
+    
+    // For recurring events, we need to check what approach to use
+    // Try using series_id if available, otherwise use the direct event ID
+    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
+    let updateUrl;
+    let updateData;
+    
+    if (eventData.series_id) {
+      // If we have a series ID, try to update the entire series
+      updateUrl = `${baseUrl}/events/${eventData.series_id}`;
+      console.log(`Updating entire series with ID: ${eventData.series_id}`);
+      
+      updateData = {
+        id: eventData.series_id,
+        start_dt: eventData.start_dt,
+        end_dt: eventData.end_dt,
+        title: eventData.title,
+        subcalendar_id: finalSubcalendarIds[0], // Primary subcalendar ID
+        subcalendar_ids: finalSubcalendarIds,   // All subcalendar IDs
+        custom: customFields
+      };
+    } else {
+      // Otherwise try using the standard approach
+      updateUrl = `${baseUrl}/events/${eventData.id}`;
+      console.log(`Updating single occurrence with ID: ${eventData.id}`);
+      
+      updateData = {
+        id: eventData.id,
+        start_dt: eventData.start_dt,
+        end_dt: eventData.end_dt,
+        title: eventData.title,
+        subcalendar_id: finalSubcalendarIds[0], // Primary subcalendar ID
+        subcalendar_ids: finalSubcalendarIds,   // All subcalendar IDs
+        custom: customFields
+      };
+      
+      // For recurring events, include the rrule if available
+      if (eventData.rrule) {
+        updateData.rrule = eventData.rrule;
+      }
+    }
+    
+    // Also include other important fields if they exist
+    if (eventData.who) updateData.who = eventData.who;
+    if (eventData.location) updateData.location = eventData.location;
+    if (eventData.notes) updateData.notes = eventData.notes;
+    if (eventData.tz) updateData.tz = eventData.tz;
+    if (eventData.all_day !== undefined) updateData.all_day = eventData.all_day;
+    
+    console.log(`Updating recurring event with payload:`, JSON.stringify(updateData, null, 2));
+    
+    try {
+      // Make the API request to update the event
+      const updateResponse = await axios.put(
+        updateUrl,
+        updateData,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Teamup-Token': TEAMUP_API_KEY
+          }
+        }
+      );
+      
+      console.log(`API response status: ${updateResponse.status}`);
+      console.log(`Response data: ${JSON.stringify(updateResponse.data || {})}`);
+      return true;
+    } catch (axiosError) {
+      console.error('❌ API request failed:', axiosError.message);
+      
+      if (axiosError.response) {
+        console.error('Response status:', axiosError.response.status);
+        console.error('Response data:', JSON.stringify(axiosError.response.data || {}));
+        
+        // If the series update fails, try updating the single occurrence
+        if (eventData.series_id && axiosError.response.status === 404) {
+          console.log('Series update failed, trying to update single occurrence...');
+          return await updateSingleOccurrence(eventData, zoomLink);
+        }
+      }
+      
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ Error in updateRecurringEventZoomLink function:', error.message || error);
+    return false;
+  }
+}
+
+// Helper function to update a single occurrence if series update fails
+async function updateSingleOccurrence(eventData, zoomLink) {
+  try {
+    console.log(`Attempting to update single occurrence of recurring event ${eventData.id}...`);
+    
+    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
+    
+    // Create a proper copy of the custom fields
+    const customFields = {};
+    if (eventData.custom) {
+      Object.keys(eventData.custom).forEach(key => {
+        customFields[key] = eventData.custom[key];
+      });
+    }
+    
+    // Update our specific custom field with raw link
+    customFields[CUSTOM_FIELD_NAME] = {
+      html: zoomLink
+    };
+    
+    // Try a different endpoint for single occurrences
+    const updateData = {
+      id: eventData.id,
+      start_dt: eventData.start_dt,
+      end_dt: eventData.end_dt,
+      title: eventData.title,
+      subcalendar_id: eventData.subcalendar_id,
+      custom: customFields
+    };
+    
+    // Also include other important fields if they exist
+    if (eventData.who) updateData.who = eventData.who;
+    if (eventData.location) updateData.location = eventData.location;
+    if (eventData.notes) updateData.notes = eventData.notes;
+    if (eventData.tz) updateData.tz = eventData.tz;
+    if (eventData.all_day !== undefined) updateData.all_day = eventData.all_day;
+    
+    console.log(`Updating single occurrence with payload:`, JSON.stringify(updateData, null, 2));
+    
+    const updateResponse = await axios.put(
+      `${baseUrl}/events/${eventData.id}`,
+      updateData,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Teamup-Token': TEAMUP_API_KEY
+        }
+      }
+    );
+    
+    console.log(`API response status: ${updateResponse.status}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error updating single occurrence:', error.message);
+    return false;
+  }
+}// Teamup Webhook Handler
 // For Express.js on Vercel, Netlify, etc.
 
 const express = require('express');
@@ -151,6 +348,12 @@ app.post('/webhook', async (req, res) => {
         continue;
       }
       
+      // Log if this is a recurring event
+      const isRecurring = !!eventData.series_id || !!eventData.rrule;
+      if (isRecurring) {
+        console.log(`📅 Recurring event detected. Series ID: ${eventData.series_id || 'N/A'}, RRULE: ${eventData.rrule || 'N/A'}`);
+      }
+      
       // Check if this is an event creation or modification
       if (trigger === 'event.created' || trigger === 'event.modified') {
         console.log('✓ Event trigger matches criteria (created/modified)');
@@ -177,8 +380,15 @@ app.post('/webhook', async (req, res) => {
           console.log(`Found Zoom link for sub-calendar ${subCalendarIdStr}: ${zoomLink}`);
           
           try {
-            // Update the event with the Zoom link (using await for better error capture)
-            const updateResult = await updateEventZoomLink(eventId, zoomLink);
+            let updateResult;
+            
+            if (isRecurring) {
+              // For recurring events, we'll use the event data from the webhook
+              updateResult = await updateRecurringEventZoomLink(eventData, zoomLink);
+            } else {
+              // For regular events, use the normal approach
+              updateResult = await updateEventZoomLink(eventId, zoomLink);
+            }
             
             if (updateResult) {
               console.log(`✅ Successfully updated event ${eventId} with Zoom link`);
