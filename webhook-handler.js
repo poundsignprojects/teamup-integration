@@ -53,7 +53,7 @@ const CALENDAR_ID = process.env.CALENDAR_ID;
 
 // Map of sub-calendar IDs to specific Zoom links
 const SUB_CALENDAR_ZOOM_LINKS = {
-  '12345': 'Zoom Link for Team A: https://zoom.us/j/123456789',
+  '14156325': 'Zoom Link for Team A: https://zoom.us/j/123456789',
   '67890': 'Zoom Link for Team B: https://zoom.us/j/987654321',
   // Add more sub-calendars and their respective Zoom links
 };
@@ -122,7 +122,7 @@ async function updateEventZoomLink(eventId, zoomLink) {
     // Note: Update this structure based on how your custom fields are configured
     const updateData = {
       custom: {
-        'zoom link': zoomLink
+        'zoom_link2': zoomLink
       }
     };
     
