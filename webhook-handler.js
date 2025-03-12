@@ -97,6 +97,9 @@ const SUB_CALENDAR_ZOOM_LINKS = {
   '67890': 'Zoom Link for Team B: https://zoom.us/j/987654321',
 };
 
+// Configure the name of the custom field to update
+const CUSTOM_FIELD_NAME = 'zoom_link2'; // Match the existing field name in your Teamup calendar
+
 // Middleware to parse JSON request body
 app.use(bodyParser.json());
 
@@ -111,7 +114,7 @@ app.get('/webhook', (req, res) => {
 });
 
 // Endpoint to receive Teamup webhooks
-app.post('/webhook', (req, res) => {
+app.post('/webhook', async (req, res) => {
   // Always log webhook receipt
   console.log('🔔 Webhook received at:', new Date().toISOString());
   
@@ -166,18 +169,18 @@ app.post('/webhook', (req, res) => {
         if (zoomLink) {
           console.log(`Found Zoom link for sub-calendar ${subCalendarIdStr}: ${zoomLink}`);
           
-          // Update the event with the Zoom link
-          updateEventZoomLink(eventId, zoomLink)
-            .then(updateResult => {
-              if (updateResult) {
-                console.log(`✅ Successfully updated event ${eventId} with Zoom link`);
-              } else {
-                console.log(`❌ Failed to update event ${eventId} with Zoom link`);
-              }
-            })
-            .catch(error => {
-              console.error('Error in update promise:', error);
-            });
+          try {
+            // Update the event with the Zoom link (using await for better error capture)
+            const updateResult = await updateEventZoomLink(eventId, zoomLink);
+            
+            if (updateResult) {
+              console.log(`✅ Successfully updated event ${eventId} with Zoom link`);
+            } else {
+              console.log(`❌ Failed to update event ${eventId} with Zoom link`);
+            }
+          } catch (error) {
+            console.error(`❌ Error updating event ${eventId}:`, error.message);
+          }
         } else {
           console.log(`⚠️ No Zoom link configured for sub-calendar ${subCalendarIdStr}`);
           console.log('Available sub-calendar IDs:', Object.keys(SUB_CALENDAR_ZOOM_LINKS).join(', '));
@@ -219,24 +222,32 @@ async function updateEventZoomLink(eventId, zoomLink) {
       return false;
     }
     
+    // Log actual values (safely)
+    console.log(`Calendar ID: ${CALENDAR_ID}`);
+    console.log(`API Key: ${TEAMUP_API_KEY ? (TEAMUP_API_KEY.substring(0, 3) + '...') : 'not set'}`);
+    
     const url = `https://api.teamup.com/${CALENDAR_ID}/events/${eventId}`;
     console.log(`API URL: ${url}`);
     
+    // Format the Zoom link HTML to match Teamup's format
+    const zoomLinkHtml = `<a href="${zoomLink}" target="_blank" rel="noreferrer noopener external">${zoomLink}</a>`;
+    
     // Prepare the update data
-    // Note: Update this structure based on how your custom fields are configured
     const updateData = {
-      custom: {
-        'zoom_link': {
-          html: zoomLink
-        }
-      }
+      custom: {}
+    };
+    updateData.custom[CUSTOM_FIELD_NAME] = {
+      html: zoomLinkHtml
     };
     
     console.log('Request payload:', JSON.stringify(updateData));
     
     // Make the API request to update the event
     try {
-      const response = await axios.put(url, updateData, {
+      const response = await axios({
+        method: 'put',
+        url: url,
+        data: updateData,
         headers: {
           'Content-Type': 'application/json',
           'Teamup-Token': TEAMUP_API_KEY
@@ -244,6 +255,7 @@ async function updateEventZoomLink(eventId, zoomLink) {
       });
       
       console.log(`API response status: ${response.status}`);
+      console.log(`Response data: ${JSON.stringify(response.data || {}).substring(0, 200)}`);
       return true;
     } catch (axiosError) {
       console.error('❌ API request failed:', axiosError.message);
