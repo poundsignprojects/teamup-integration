@@ -244,19 +244,22 @@ async function updateEventZoomLink(eventId, zoomLink) {
       console.log(`Successfully fetched event data. Status: ${getResponse.status}`);
       
       // Get the existing event data and log all fields for debugging
-      const eventData = getResponse.data;
-      console.log("Retrieved event data:", JSON.stringify(eventData, null, 2));
+      const eventData = getResponse.data.event; // Extract from the "event" property
+      console.log("Retrieved event properties:", Object.keys(eventData).join(', '));
       
       // Format the Zoom link HTML
       const zoomLinkHtml = `<a href="${zoomLink}" target="_blank" rel="noreferrer noopener external">${zoomLink}</a>`;
       
-      // Make a copy of the custom fields
-      const customFields = { ...(eventData.custom || {}) };
+      // Create a proper copy of the custom fields
+      const customFields = {};
+      if (eventData.custom) {
+        Object.keys(eventData.custom).forEach(key => {
+          customFields[key] = eventData.custom[key];
+        });
+      }
       
       // Update our specific custom field
-      customFields[CUSTOM_FIELD_NAME] = {
-        html: zoomLinkHtml
-      };
+      customFields[CUSTOM_FIELD_NAME] = zoomLinkHtml;
       
       // Create the update payload with all required fields
       const updateData = {
