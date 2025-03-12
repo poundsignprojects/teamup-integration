@@ -6,9 +6,19 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 const app = express();
 
+// Safely get environment variables
+const getEnv = (key, defaultValue = '') => {
+  try {
+    return process.env[key] || defaultValue;
+  } catch (error) {
+    console.error(`Error accessing environment variable ${key}:`, error);
+    return defaultValue;
+  }
+};
+
 // Configurable logging
-const ENABLE_LOGGING = process.env.ENABLE_LOGGING === 'true'; // Disabled by default unless explicitly set to 'true'
-const LOG_LEVEL = process.env.LOG_LEVEL || 'info'; // Default to 'info' if not specified
+const ENABLE_LOGGING = getEnv('ENABLE_LOGGING') === 'true'; // Disabled by default
+const LOG_LEVEL = getEnv('LOG_LEVEL', 'info'); // Default to 'info'
 
 // Simple logging utility with error handling
 const logger = {
@@ -73,9 +83,9 @@ const logger = {
 };
 
 // Your Teamup API key
-const TEAMUP_API_KEY = process.env.TEAMUP_API_KEY;
+const TEAMUP_API_KEY = getEnv('TEAMUP_API_KEY');
 // Your calendar ID
-const CALENDAR_ID = process.env.CALENDAR_ID;
+const CALENDAR_ID = getEnv('CALENDAR_ID');
 
 // Map of sub-calendar IDs to specific Zoom links
 const SUB_CALENDAR_ZOOM_LINKS = {
@@ -169,6 +179,14 @@ app.post('/webhook', (req, res) => {
         console.log(`⚠️ No Zoom link configured for sub-calendar ${subCalendarId}`);
         console.log('Available sub-calendar IDs:', Object.keys(SUB_CALENDAR_ZOOM_LINKS).join(', '));
       }
+      
+      // Log event fields for detailed debugging
+      logger.debug('Event details:');
+      if (logger.shouldLog('debug')) {
+        for (const [key, value] of Object.entries(eventData.event)) {
+          console.log(`  ${key}: ${JSON.stringify(value)}`);
+        }
+      }
     } else {
       console.log(`⚠️ Event action ${eventData.action} does not match criteria (create/update)`);
     }
@@ -178,51 +196,6 @@ app.post('/webhook', (req, res) => {
   } catch (error) {
     console.error('❌ Error processing webhook:', error.message || error);
     
-    // Still return 200 to acknowledge receipt
-    res.status(200).send('Webhook received with errors');
-  }
-});
-      const eventId = eventData.event.id;
-      const subCalendarId = eventData.event.subcalendar_id;
-      
-      // Get the appropriate Zoom link for this sub-calendar
-      const zoomLink = SUB_CALENDAR_ZOOM_LINKS[subCalendarId];
-      
-      // Check if we have a Zoom link for this sub-calendar
-      if (zoomLink) {
-        console.log(`Found Zoom link for sub-calendar ${subCalendarId}: ${zoomLink}`);
-        
-        // Update the event with the Zoom link
-        const updateResult = await updateEventZoomLink(eventId, zoomLink);
-        
-        if (updateResult) {
-          console.log(`✅ Successfully updated event ${eventId} with Zoom link`);
-        } else {
-          console.log(`❌ Failed to update event ${eventId} with Zoom link`);
-        }
-      } else {
-        console.log(`⚠️ No Zoom link configured for sub-calendar ${subCalendarId}`);
-        console.log('Available sub-calendar IDs:', Object.keys(SUB_CALENDAR_ZOOM_LINKS).join(', '));
-      }
-      
-      // Log event fields for detailed debugging
-      logger.debug('Event details:');
-      if (logger.shouldLog('debug')) {
-        for (const [key, value] of Object.entries(eventData.event)) {
-          console.log(`  ${key}: ${JSON.stringify(value)}`);
-        }
-      }
-    }
-    
-    // Always return a 200 response to Teamup quickly
-    res.status(200).send('Webhook received');
-  } catch (error) {
-    logger.error('Error processing webhook:', error);
-    logger.error('Error details:', {
-      message: error.message,
-      stack: error.stack,
-      requestBody: req.body
-    });
     // Still return 200 to acknowledge receipt
     res.status(200).send('Webhook received with errors');
   }
@@ -278,7 +251,6 @@ async function updateEventZoomLink(eventId, zoomLink) {
     console.error('❌ Error in updateEventZoomLink function:', error.message || error);
     return false;
   }
-}
 }
 
 // For local testing
