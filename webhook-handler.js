@@ -90,8 +90,8 @@ const CALENDAR_ID = getEnv('CALENDAR_ID');
 // Map of sub-calendar IDs to specific Zoom links
 const SUB_CALENDAR_ZOOM_LINKS = {
   // Add your actual subcalendar ID from the logs (14156325)
-  '14156325': 'Zoom Link for Your Team: https://zoom.us/j/123456789',
-  
+  '14156325': 'Zoom Link for BC Powder: https://zoom.us/j/123456789',
+  '14098383': 'Zoom Link for New Coffee Shop: https://zoom.us/j/123456789',
   // Keep these as examples/backups
   '12345': 'Zoom Link for Team A: https://zoom.us/j/123456789',
   '67890': 'Zoom Link for Team B: https://zoom.us/j/987654321',
