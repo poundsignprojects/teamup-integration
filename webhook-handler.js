@@ -94,22 +94,12 @@ const SUB_CALENDAR_ZOOM_LINKS = {
   // Add more sub-calendars and their respective Zoom links
 };
 
-// Middleware to parse JSON request body with error handling
-app.use((req, res, next) => {
-  bodyParser.json({
-    // Increase limit if needed
-    limit: '1mb',
-    // Add error handling
-    verify: (req, res, buf) => {
-      try {
-        JSON.parse(buf);
-      } catch (e) {
-        res.status(400).send('Invalid JSON');
-        throw new Error('Invalid JSON');
-      }
-    }
-  })(req, res, next);
-});
+// Raw body parser middleware
+app.use(express.json({
+  verify: (req, res, buf, encoding) => {
+    req.rawBody = buf.toString(encoding || 'utf8');
+  }
+}));
 
 // Health check endpoint
 app.get('/', (req, res) => {
@@ -126,9 +116,30 @@ app.post('/webhook', (req, res) => {
   // Always log webhook receipt regardless of ENABLE_LOGGING setting
   console.log('🔔 Webhook received at:', new Date().toISOString());
   
+  // Log the full request details
+  console.log('📋 Request Headers:');
+  console.log(JSON.stringify(req.headers, null, 2));
+  
+  console.log('📦 Raw Request Body:');
+  if (req.rawBody) {
+    console.log(req.rawBody);
+  } else {
+    console.log('No raw body available');
+  }
+  
+  console.log('📦 Parsed Request Body:');
+  console.log(JSON.stringify(req.body, null, 2));
+  
   // Wrap everything in try/catch to prevent crashes
   try {
     const eventData = req.body || {};
+    
+    // Check if body is completely empty
+    if (Object.keys(eventData).length === 0) {
+      console.log('⚠️ Received empty request body');
+      res.status(200).send('Webhook received, but request body was empty');
+      return;
+    }
     
     // Always log basic info about the webhook
     console.log(`Action: ${eventData.action || 'undefined'}, Event ID: ${eventData.event?.id || 'undefined'}`);
@@ -136,6 +147,7 @@ app.post('/webhook', (req, res) => {
     // Check if event data exists
     if (!eventData || !eventData.event) {
       console.log('⚠️ No valid event data found in webhook payload');
+      console.log('Available fields in payload:', Object.keys(eventData).join(', '));
       res.status(200).send('Webhook received, but no valid event data found');
       return;
     }
