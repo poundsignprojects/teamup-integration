@@ -226,64 +226,82 @@ async function updateEventZoomLink(eventId, zoomLink) {
     console.log(`Calendar ID: ${CALENDAR_ID}`);
     console.log(`API Key: ${TEAMUP_API_KEY ? (TEAMUP_API_KEY.substring(0, 3) + '...') : 'not set'}`);
     
-    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}/events`;
+    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
     
     // First, get the existing event data
-    console.log(`Fetching existing event data from: ${baseUrl}/${eventId}`);
+    console.log(`Fetching existing event data from: ${baseUrl}/events/${eventId}`);
     
     try {
       // Get the current event
       const getResponse = await axios({
         method: 'get',
-        url: `${baseUrl}/${eventId}`,
+        url: `${baseUrl}/events/${eventId}`,
         headers: {
-          'Content-Type': 'application/json',
           'Teamup-Token': TEAMUP_API_KEY
         }
       });
       
       console.log(`Successfully fetched event data. Status: ${getResponse.status}`);
       
-      // Get the existing event data
+      // Get the existing event data and log all fields for debugging
       const eventData = getResponse.data;
+      console.log("Retrieved event data:", JSON.stringify(eventData, null, 2));
       
-      // Format the Zoom link HTML to match Teamup's format
+      // Format the Zoom link HTML
       const zoomLinkHtml = `<a href="${zoomLink}" target="_blank" rel="noreferrer noopener external">${zoomLink}</a>`;
       
-      // Prepare update data with all required fields
-      const updateData = {
-        start_dt: eventData.start_dt,  // Keep existing start date
-        end_dt: eventData.end_dt,      // Keep existing end date
-        title: eventData.title,        // Keep existing title
-        custom: eventData.custom || {} // Start with existing custom fields
-      };
+      // Make a copy of the custom fields
+      const customFields = { ...(eventData.custom || {}) };
       
-      // Update only our specific custom field
-      updateData.custom[CUSTOM_FIELD_NAME] = {
+      // Update our specific custom field
+      customFields[CUSTOM_FIELD_NAME] = {
         html: zoomLinkHtml
       };
       
-      console.log(`Updating event at: ${baseUrl}/${eventId}`);
-      console.log('Request payload:', JSON.stringify(updateData));
+      // Create the update payload with all required fields
+      const updateData = {
+        id: eventId,
+        start_dt: eventData.start_dt,
+        end_dt: eventData.end_dt,
+        title: eventData.title,
+        custom: customFields
+      };
+      
+      console.log(`Updating event with payload:`, JSON.stringify(updateData, null, 2));
       
       // Make the API request to update the event
-      const updateResponse = await axios({
-        method: 'put',
-        url: `${baseUrl}/${eventId}`,
-        data: updateData,
-        headers: {
-          'Content-Type': 'application/json',
-          'Teamup-Token': TEAMUP_API_KEY
+      const updateResponse = await axios.put(
+        `${baseUrl}/events/${eventId}`,
+        updateData,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Teamup-Token': TEAMUP_API_KEY
+          }
         }
-      });
+      );
       
       console.log(`API response status: ${updateResponse.status}`);
-      console.log(`Response data: ${JSON.stringify(updateResponse.data || {}).substring(0, 200)}`);
+      console.log(`Response data: ${JSON.stringify(updateResponse.data || {})}`);
       return true;
     } catch (axiosError) {
       console.error('❌ API request failed:', axiosError.message);
-      console.error('Response status:', axiosError.response?.status || 'Unknown');
-      console.error('Response data:', JSON.stringify(axiosError.response?.data || {}));
+      
+      if (axiosError.response) {
+        console.error('Response status:', axiosError.response.status);
+        console.error('Response data:', JSON.stringify(axiosError.response.data || {}));
+        
+        // Detailed logging for the specific error we're facing
+        if (axiosError.response.data?.error?.id === 'event_missing_start_end_datetime') {
+          console.error('ERROR DETAILS: This error occurs when start_dt or end_dt is missing.');
+          console.error('Our payload contains:');
+          console.error('start_dt:', axiosError.config?.data ? JSON.parse(axiosError.config.data).start_dt : 'unknown');
+          console.error('end_dt:', axiosError.config?.data ? JSON.parse(axiosError.config.data).end_dt : 'unknown');
+        }
+      } else {
+        console.error('No response from server');
+      }
+      
       return false;
     }
   } catch (error) {
