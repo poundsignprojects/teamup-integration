@@ -90,8 +90,14 @@ const CALENDAR_ID = getEnv('CALENDAR_ID');
 // Map of sub-calendar IDs to specific Zoom links
 const SUB_CALENDAR_ZOOM_LINKS = {
   // Add your actual subcalendar ID from the logs (14156325)
-  '14156325': 'Zoom Link for BC Powder: https://zoom.us/j/123456789',
-  '14098383': 'Zoom Link for New Coffee Shop: https://zoom.us/j/123456789',
+  '14098383': 'New Coffee Shop: https://zoom.us/j/123456789',
+  '14098359': 'Integrity Group AKA Saturday Morning Workshop<br>\nhttps://us02web.zoom.us/j/82971629914?pwd=ajZBSkI4bmZjWVZpSXBmenJlMXhUUT09<br>\nMeeting ID: 829 7162 9914<br>\nPasscode: xs11Aw<br>\nCall in +13462487799<br>\nPassword: 836591<br>\nHost code: 983273<br>\nOne tap mobile +13462487799,82971629914,#,#,,836591# US (Houston)',
+  '14098366': 'DJ Zoom: https://zoom.us/j/123456789',
+  '14156325': 'BC Powder: https://zoom.us/j/123456789',
+  '14098372': 'Power Lunch: https://zoom.us/j/123456789',
+  '14098358': 'SWeT Zoom: https://zoom.us/j/123456789',
+  '14132335': 'Soul Train: https://zoom.us/j/123456789',
+  '14098400': 'Sober Lounge: https://zoom.us/j/123456789',
   
   // Keep these as examples/backups
   '12345': 'Zoom Link for Team A: https://zoom.us/j/123456789',
