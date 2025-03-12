@@ -53,7 +53,7 @@ const CALENDAR_ID = process.env.CALENDAR_ID;
 
 // Map of sub-calendar IDs to specific Zoom links
 const SUB_CALENDAR_ZOOM_LINKS = {
-  '14156325': 'Zoom Link for Team A: https://zoom.us/j/123456789',
+  '12345': 'Zoom Link for Team A: https://zoom.us/j/123456789',
   '67890': 'Zoom Link for Team B: https://zoom.us/j/987654321',
   // Add more sub-calendars and their respective Zoom links
 };
@@ -63,12 +63,16 @@ app.use(bodyParser.json());
 
 // Endpoint to receive Teamup webhooks
 app.post('/webhook', async (req, res) => {
+  // Always log webhook receipt regardless of ENABLE_LOGGING setting
+  console.log('🔔 Webhook received at:', new Date().toISOString());
+  
   try {
-    logger.info('Webhook triggered at:', new Date().toISOString());
-    
     const eventData = req.body;
     
-    // Log the complete webhook payload
+    // Always log basic info about the webhook
+    console.log(`Action: ${eventData.action || 'undefined'}, Event ID: ${eventData.event?.id || 'undefined'}`);
+    
+    // Log the complete webhook payload if debugging is enabled
     logger.debug('Webhook payload:');
     if (logger.shouldLog('debug')) {
       console.log(JSON.stringify(eventData, null, 2));
@@ -76,18 +80,46 @@ app.post('/webhook', async (req, res) => {
     
     // Check if this is an event creation or update
     if (eventData.action === 'event.create' || eventData.action === 'event.update') {
+      console.log('✓ Event action matches criteria (create/update)');
+      
+      if (!eventData.event) {
+        console.log('⚠️ No event object found in webhook payload');
+        res.status(200).send('Webhook received, but no event object found');
+        return;
+      }
+      
+      const eventId = eventData.event.id;
+      const subCalendarId = eventData.event.subcalendar_id;
+      
+      console.log(`Event ID: ${eventId}, Sub-calendar ID: ${subCalendarId}`);
+      
+      // Check if subcalendar_id exists
+      if (!subCalendarId) {
+        console.log('⚠️ No subcalendar_id found in event');
+        res.status(200).send('Webhook received, but no subcalendar_id found');
+        return;
+      }
       const eventId = eventData.event.id;
       const subCalendarId = eventData.event.subcalendar_id;
       
       // Get the appropriate Zoom link for this sub-calendar
       const zoomLink = SUB_CALENDAR_ZOOM_LINKS[subCalendarId];
       
+      // Check if we have a Zoom link for this sub-calendar
       if (zoomLink) {
+        console.log(`Found Zoom link for sub-calendar ${subCalendarId}: ${zoomLink}`);
+        
         // Update the event with the Zoom link
-        await updateEventZoomLink(eventId, zoomLink);
-        logger.info(`Updated event ${eventId} with Zoom link for sub-calendar ${subCalendarId}`);
+        const updateResult = await updateEventZoomLink(eventId, zoomLink);
+        
+        if (updateResult) {
+          console.log(`✅ Successfully updated event ${eventId} with Zoom link`);
+        } else {
+          console.log(`❌ Failed to update event ${eventId} with Zoom link`);
+        }
       } else {
-        logger.warn(`No Zoom link configured for sub-calendar ${subCalendarId}`);
+        console.log(`⚠️ No Zoom link configured for sub-calendar ${subCalendarId}`);
+        console.log('Available sub-calendar IDs:', Object.keys(SUB_CALENDAR_ZOOM_LINKS).join(', '));
       }
       
       // Log event fields for detailed debugging
@@ -116,30 +148,48 @@ app.post('/webhook', async (req, res) => {
 // Function to update the Zoom link for an event
 async function updateEventZoomLink(eventId, zoomLink) {
   try {
+    console.log(`Attempting to update event ${eventId} with Zoom link...`);
+    
+    if (!CALENDAR_ID) {
+      console.error('❌ CALENDAR_ID environment variable is not set');
+      return false;
+    }
+    
+    if (!TEAMUP_API_KEY) {
+      console.error('❌ TEAMUP_API_KEY environment variable is not set');
+      return false;
+    }
+    
     const url = `https://api.teamup.com/${CALENDAR_ID}/events/${eventId}`;
+    console.log(`API URL: ${url}`);
     
     // Prepare the update data
     // Note: Update this structure based on how your custom fields are configured
     const updateData = {
       custom: {
-        'zoom_link2': zoomLink
+        'zoom link': zoomLink
       }
     };
     
-    logger.debug(`Making API request to ${url}`);
+    console.log('Request payload:', JSON.stringify(updateData));
+    console.log('Using API key:', TEAMUP_API_KEY ? TEAMUP_API_KEY.substring(0, 3) + '...' : 'undefined');
     
     // Make the API request to update the event
-    await axios.put(url, updateData, {
+    const response = await axios.put(url, updateData, {
       headers: {
         'Content-Type': 'application/json',
         'Teamup-Token': TEAMUP_API_KEY
       }
     });
     
-    logger.debug(`Successfully updated event ${eventId}`);
+    console.log(`API response status: ${response.status}`);
+    console.log(`Response data:`, JSON.stringify(response.data).substring(0, 100) + '...');
+    
     return true;
   } catch (error) {
-    logger.error('Error updating event:', error);
+    console.error('❌ Error updating event:', error.message);
+    console.error('Error response:', error.response?.data || 'No response data');
+    console.error('Error status:', error.response?.status || 'No status code');
     return false;
   }
 }
