@@ -89,17 +89,16 @@ const CALENDAR_ID = getEnv('CALENDAR_ID');
 
 // Map of sub-calendar IDs to specific Zoom links
 const SUB_CALENDAR_ZOOM_LINKS = {
+  // Add your actual subcalendar ID from the logs (14156325)
+  '14156325': 'Zoom Link for Your Team: https://zoom.us/j/123456789',
+  
+  // Keep these as examples/backups
   '12345': 'Zoom Link for Team A: https://zoom.us/j/123456789',
   '67890': 'Zoom Link for Team B: https://zoom.us/j/987654321',
-  // Add more sub-calendars and their respective Zoom links
 };
 
-// Raw body parser middleware
-app.use(express.json({
-  verify: (req, res, buf, encoding) => {
-    req.rawBody = buf.toString(encoding || 'utf8');
-  }
-}));
+// Middleware to parse JSON request body
+app.use(bodyParser.json());
 
 // Health check endpoint
 app.get('/', (req, res) => {
@@ -113,94 +112,85 @@ app.get('/webhook', (req, res) => {
 
 // Endpoint to receive Teamup webhooks
 app.post('/webhook', (req, res) => {
-  // Always log webhook receipt regardless of ENABLE_LOGGING setting
+  // Always log webhook receipt
   console.log('🔔 Webhook received at:', new Date().toISOString());
   
-  // Log the full request details
-  console.log('📋 Request Headers:');
-  console.log(JSON.stringify(req.headers, null, 2));
-  
-  console.log('📦 Raw Request Body:');
-  if (req.rawBody) {
-    console.log(req.rawBody);
-  } else {
-    console.log('No raw body available');
-  }
-  
-  console.log('📦 Parsed Request Body:');
-  console.log(JSON.stringify(req.body, null, 2));
-  
-  // Wrap everything in try/catch to prevent crashes
   try {
-    const eventData = req.body || {};
+    const webhookData = req.body;
     
-    // Check if body is completely empty
-    if (Object.keys(eventData).length === 0) {
-      console.log('⚠️ Received empty request body');
-      res.status(200).send('Webhook received, but request body was empty');
+    // Log the payload summary
+    console.log(`Webhook ID: ${webhookData.id || 'undefined'}, Calendar: ${webhookData.calendar || 'undefined'}`);
+    
+    // Check if dispatch array exists
+    if (!webhookData.dispatch || !Array.isArray(webhookData.dispatch) || webhookData.dispatch.length === 0) {
+      console.log('⚠️ No dispatch array found in webhook payload');
+      res.status(200).send('Webhook received, but no dispatch array found');
       return;
     }
     
-    // Always log basic info about the webhook
-    console.log(`Action: ${eventData.action || 'undefined'}, Event ID: ${eventData.event?.id || 'undefined'}`);
-    
-    // Check if event data exists
-    if (!eventData || !eventData.event) {
-      console.log('⚠️ No valid event data found in webhook payload');
-      console.log('Available fields in payload:', Object.keys(eventData).join(', '));
-      res.status(200).send('Webhook received, but no valid event data found');
-      return;
-    }
-    
-    // Check if this is an event creation or update
-    if (eventData.action === 'event.create' || eventData.action === 'event.update') {
-      console.log('✓ Event action matches criteria (create/update)');
+    // Process each dispatch item (usually just one)
+    for (const dispatchItem of webhookData.dispatch) {
+      const trigger = dispatchItem.trigger;
+      const eventData = dispatchItem.event;
       
-      const eventId = eventData.event.id;
-      const subCalendarId = eventData.event.subcalendar_id;
+      console.log(`Trigger: ${trigger || 'undefined'}, Event ID: ${eventData?.id || 'undefined'}`);
       
-      console.log(`Event ID: ${eventId}, Sub-calendar ID: ${subCalendarId}`);
-      
-      // Check if subcalendar_id exists
-      if (!subCalendarId) {
-        console.log('⚠️ No subcalendar_id found in event');
-        res.status(200).send('Webhook received, but no subcalendar_id found');
-        return;
+      // Check if event data exists
+      if (!eventData) {
+        console.log('⚠️ No event data found in dispatch item');
+        continue;
       }
       
-      // Get the appropriate Zoom link for this sub-calendar
-      const zoomLink = SUB_CALENDAR_ZOOM_LINKS[subCalendarId];
-      
-      // Check if we have a Zoom link for this sub-calendar
-      if (zoomLink) {
-        console.log(`Found Zoom link for sub-calendar ${subCalendarId}: ${zoomLink}`);
+      // Check if this is an event creation or modification
+      if (trigger === 'event.created' || trigger === 'event.modified') {
+        console.log('✓ Event trigger matches criteria (created/modified)');
         
-        // Update the event with the Zoom link
-        updateEventZoomLink(eventId, zoomLink)
-          .then(updateResult => {
-            if (updateResult) {
-              console.log(`✅ Successfully updated event ${eventId} with Zoom link`);
-            } else {
-              console.log(`❌ Failed to update event ${eventId} with Zoom link`);
-            }
-          })
-          .catch(error => {
-            console.error('Error in update promise:', error);
-          });
-      } else {
-        console.log(`⚠️ No Zoom link configured for sub-calendar ${subCalendarId}`);
-        console.log('Available sub-calendar IDs:', Object.keys(SUB_CALENDAR_ZOOM_LINKS).join(', '));
-      }
-      
-      // Log event fields for detailed debugging
-      logger.debug('Event details:');
-      if (logger.shouldLog('debug')) {
-        for (const [key, value] of Object.entries(eventData.event)) {
-          console.log(`  ${key}: ${JSON.stringify(value)}`);
+        const eventId = eventData.id;
+        const subCalendarId = eventData.subcalendar_id;
+        
+        console.log(`Event ID: ${eventId}, Sub-calendar ID: ${subCalendarId}`);
+        
+        // Check if subcalendar_id exists
+        if (!subCalendarId) {
+          console.log('⚠️ No subcalendar_id found in event');
+          continue;
         }
+        
+        // Convert subcalendar_id to string for consistent comparison
+        const subCalendarIdStr = String(subCalendarId);
+        
+        // Get the appropriate Zoom link for this sub-calendar
+        const zoomLink = SUB_CALENDAR_ZOOM_LINKS[subCalendarIdStr];
+        
+        // Check if we have a Zoom link for this sub-calendar
+        if (zoomLink) {
+          console.log(`Found Zoom link for sub-calendar ${subCalendarIdStr}: ${zoomLink}`);
+          
+          // Update the event with the Zoom link
+          updateEventZoomLink(eventId, zoomLink)
+            .then(updateResult => {
+              if (updateResult) {
+                console.log(`✅ Successfully updated event ${eventId} with Zoom link`);
+              } else {
+                console.log(`❌ Failed to update event ${eventId} with Zoom link`);
+              }
+            })
+            .catch(error => {
+              console.error('Error in update promise:', error);
+            });
+        } else {
+          console.log(`⚠️ No Zoom link configured for sub-calendar ${subCalendarIdStr}`);
+          console.log('Available sub-calendar IDs:', Object.keys(SUB_CALENDAR_ZOOM_LINKS).join(', '));
+        }
+        
+        // Log event fields for detailed debugging
+        console.log('🔍 Event details:');
+        console.log(`  Title: ${eventData.title || 'undefined'}`);
+        console.log(`  Start: ${eventData.start_dt || 'undefined'}`);
+        console.log(`  Custom fields: ${JSON.stringify(eventData.custom || {})}`);
+      } else {
+        console.log(`⚠️ Event trigger ${trigger} does not match criteria (created/modified)`);
       }
-    } else {
-      console.log(`⚠️ Event action ${eventData.action} does not match criteria (create/update)`);
     }
     
     // Always return success to acknowledge receipt
@@ -236,7 +226,9 @@ async function updateEventZoomLink(eventId, zoomLink) {
     // Note: Update this structure based on how your custom fields are configured
     const updateData = {
       custom: {
-        'zoom link': zoomLink
+        'zoom_link': {
+          html: zoomLink
+        }
       }
     };
     
@@ -277,15 +269,5 @@ if (require.main === module) {
   }
 }
 
-// For serverless deployment - ensure we always export something
-try {
-  module.exports = app;
-} catch (error) {
-  console.error('Error in module export:', error);
-  // Provide a fallback minimal app if the main one fails
-  const fallbackApp = express();
-  fallbackApp.get('*', (req, res) => {
-    res.status(200).send('Webhook handler in recovery mode');
-  });
-  module.exports = fallbackApp;
-}
+// For serverless deployment
+module.exports = app;
