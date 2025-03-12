@@ -226,27 +226,50 @@ async function updateEventZoomLink(eventId, zoomLink) {
     console.log(`Calendar ID: ${CALENDAR_ID}`);
     console.log(`API Key: ${TEAMUP_API_KEY ? (TEAMUP_API_KEY.substring(0, 3) + '...') : 'not set'}`);
     
-    const url = `https://api.teamup.com/${CALENDAR_ID}/events/${eventId}`;
-    console.log(`API URL: ${url}`);
+    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}/events`;
     
-    // Format the Zoom link HTML to match Teamup's format
-    const zoomLinkHtml = `<a href="${zoomLink}" target="_blank" rel="noreferrer noopener external">${zoomLink}</a>`;
+    // First, get the existing event data
+    console.log(`Fetching existing event data from: ${baseUrl}/${eventId}`);
     
-    // Prepare the update data
-    const updateData = {
-      custom: {}
-    };
-    updateData.custom[CUSTOM_FIELD_NAME] = {
-      html: zoomLinkHtml
-    };
-    
-    console.log('Request payload:', JSON.stringify(updateData));
-    
-    // Make the API request to update the event
     try {
-      const response = await axios({
+      // Get the current event
+      const getResponse = await axios({
+        method: 'get',
+        url: `${baseUrl}/${eventId}`,
+        headers: {
+          'Content-Type': 'application/json',
+          'Teamup-Token': TEAMUP_API_KEY
+        }
+      });
+      
+      console.log(`Successfully fetched event data. Status: ${getResponse.status}`);
+      
+      // Get the existing event data
+      const eventData = getResponse.data;
+      
+      // Format the Zoom link HTML to match Teamup's format
+      const zoomLinkHtml = `<a href="${zoomLink}" target="_blank" rel="noreferrer noopener external">${zoomLink}</a>`;
+      
+      // Prepare update data with all required fields
+      const updateData = {
+        start_dt: eventData.start_dt,  // Keep existing start date
+        end_dt: eventData.end_dt,      // Keep existing end date
+        title: eventData.title,        // Keep existing title
+        custom: eventData.custom || {} // Start with existing custom fields
+      };
+      
+      // Update only our specific custom field
+      updateData.custom[CUSTOM_FIELD_NAME] = {
+        html: zoomLinkHtml
+      };
+      
+      console.log(`Updating event at: ${baseUrl}/${eventId}`);
+      console.log('Request payload:', JSON.stringify(updateData));
+      
+      // Make the API request to update the event
+      const updateResponse = await axios({
         method: 'put',
-        url: url,
+        url: `${baseUrl}/${eventId}`,
         data: updateData,
         headers: {
           'Content-Type': 'application/json',
@@ -254,8 +277,8 @@ async function updateEventZoomLink(eventId, zoomLink) {
         }
       });
       
-      console.log(`API response status: ${response.status}`);
-      console.log(`Response data: ${JSON.stringify(response.data || {}).substring(0, 200)}`);
+      console.log(`API response status: ${updateResponse.status}`);
+      console.log(`Response data: ${JSON.stringify(updateResponse.data || {}).substring(0, 200)}`);
       return true;
     } catch (axiosError) {
       console.error('❌ API request failed:', axiosError.message);
