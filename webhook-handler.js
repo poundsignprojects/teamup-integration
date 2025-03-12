@@ -258,8 +258,10 @@ async function updateEventZoomLink(eventId, zoomLink) {
         });
       }
       
-      // Update our specific custom field
-      customFields[CUSTOM_FIELD_NAME] = zoomLinkHtml;
+      // Update our specific custom field - use the same structure as original
+      customFields[CUSTOM_FIELD_NAME] = {
+        html: zoomLinkHtml
+      };
       
       // Create the update payload with all required fields
       const updateData = {
@@ -267,8 +269,16 @@ async function updateEventZoomLink(eventId, zoomLink) {
         start_dt: eventData.start_dt,
         end_dt: eventData.end_dt,
         title: eventData.title,
+        subcalendar_id: eventData.subcalendar_id, // Add subcalendar_id (this is "Calendar" field)
         custom: customFields
       };
+      
+      // Also include other important fields if they exist
+      if (eventData.who) updateData.who = eventData.who;
+      if (eventData.location) updateData.location = eventData.location;
+      if (eventData.notes) updateData.notes = eventData.notes;
+      if (eventData.tz) updateData.tz = eventData.tz;
+      if (eventData.all_day !== undefined) updateData.all_day = eventData.all_day;
       
       console.log(`Updating event with payload:`, JSON.stringify(updateData, null, 2));
       
@@ -294,12 +304,15 @@ async function updateEventZoomLink(eventId, zoomLink) {
         console.error('Response status:', axiosError.response.status);
         console.error('Response data:', JSON.stringify(axiosError.response.data || {}));
         
-        // Detailed logging for the specific error we're facing
-        if (axiosError.response.data?.error?.id === 'event_missing_start_end_datetime') {
-          console.error('ERROR DETAILS: This error occurs when start_dt or end_dt is missing.');
-          console.error('Our payload contains:');
+        // Detailed logging for specific error types
+        const errorId = axiosError.response.data?.error?.id;
+        if (errorId === 'event_missing_start_end_datetime') {
+          console.error('ERROR DETAILS: Missing start or end dates');
           console.error('start_dt:', axiosError.config?.data ? JSON.parse(axiosError.config.data).start_dt : 'unknown');
           console.error('end_dt:', axiosError.config?.data ? JSON.parse(axiosError.config.data).end_dt : 'unknown');
+        } else if (errorId === 'validation_error') {
+          console.error('ERROR DETAILS: Validation error - check all required fields are present');
+          console.error('Payload was:', axiosError.config?.data);
         }
       } else {
         console.error('No response from server');
