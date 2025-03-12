@@ -7,7 +7,7 @@ const axios = require('axios');
 const app = express();
 
 // Configurable logging
-const ENABLE_LOGGING = process.env.ENABLE_LOGGING !== 'false'; // Enabled by default unless explicitly set to 'false'
+const ENABLE_LOGGING = process.env.ENABLE_LOGGING === 'true'; // Disabled by default unless explicitly set to 'true'
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info'; // Default to 'info' if not specified
 
 // Simple logging utility

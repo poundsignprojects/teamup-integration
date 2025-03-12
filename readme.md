@@ -78,7 +78,6 @@ Add your deployment URL to your Teamup calendar webhook settings.
 
 Edit the `SUB_CALENDAR_ZOOM_LINKS` object in `webhook-handler.js` to map your sub-calendar IDs to their corresponding Zoom links.
 
-
 # Environment Variables
 
 Add the following variables to your `.env` file for configuration:
@@ -91,8 +90,8 @@ Add the following variables to your `.env` file for configuration:
 ## Logging Configuration
 
 - `ENABLE_LOGGING` - Controls whether logging is enabled
-  - Set to `"true"` to enable logging (default)
-  - Set to `"false"` to disable all logging
+  - Set to `"true"` to enable logging
+  - If not set or set to any other value, logging will be disabled (default)
 
 - `LOG_LEVEL` - Controls the verbosity of logs when enabled
   - `"error"` - Only log errors (least verbose)
