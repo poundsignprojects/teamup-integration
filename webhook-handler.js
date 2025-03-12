@@ -1,4 +1,83 @@
-// Function to handle recurring events - uses event data directly from webhook
+// Helper function to update a single occurrence if series update fails
+async function updateSingleOccurrence(eventData, zoomLink) {
+  try {
+    console.log(`Attempting to update single occurrence of recurring event ${eventData.id}...`);
+    
+    const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
+    
+    // Create a proper copy of the custom fields
+    const customFields = {};
+    if (eventData.custom) {
+      Object.keys(eventData.custom).forEach(key => {
+        customFields[key] = eventData.custom[key];
+      });
+    }
+    
+    // Update our specific custom field with raw link
+    customFields[CUSTOM_FIELD_NAME] = {
+      html: zoomLink
+    };
+    
+    // Try a different endpoint for single occurrences - just update the custom field
+    const updateData = {
+      id: eventData.id,
+      custom: customFields
+    };
+    
+    console.log(`Updating single occurrence with payload:`, JSON.stringify(updateData, null, 2));
+    
+    // Try PATCH first (partial update)
+    try {
+      const updateResponse = await axios.patch(
+        `${baseUrl}/events/${eventData.id}`,
+        updateData,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Teamup-Token': TEAMUP_API_KEY
+          }
+        }
+      );
+      
+      console.log(`API response status: ${updateResponse.status}`);
+      return true;
+    } catch (patchError) {
+      // If PATCH fails, use PUT with the minimal required fields
+      console.log('PATCH failed, trying minimal PUT...');
+      
+      const putData = {
+        id: eventData.id,
+        start_dt: eventData.start_dt,
+        end_dt: eventData.end_dt,
+        title: eventData.title,
+        subcalendar_id: eventData.subcalendar_id,
+        custom: customFields
+      };
+      
+      // Use start_dt for ristart_dt if it's a recurring event
+      if (eventData.rrule) {
+        putData.ristart_dt = eventData.start_dt;
+      }
+      
+      const putResponse = await axios.put(
+        `${baseUrl}/events/${eventData.id}`,
+        putData,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Teamup-Token': TEAMUP_API_KEY
+          }
+        }
+      );
+      
+      console.log(`PUT response status: ${putResponse.status}`);
+      return true;
+    }
+  } catch (error) {
+    console.error('❌ Error updating single occurrence:', error.message);
+    return false;
+  }
+}// Function to handle recurring events - uses event data directly from webhook
 async function updateRecurringEventZoomLink(eventData, zoomLink) {
   try {
     console.log(`Handling recurring event with ID ${eventData.id}...`);
@@ -13,9 +92,6 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
       console.error('❌ TEAMUP_API_KEY environment variable is not set');
       return false;
     }
-    
-    // For recurring events, we'll use the event data directly from the webhook
-    // instead of trying to fetch it, which might fail with a 404
     
     // Handle multiple subcalendars properly
     const currentSubcalendarIds = eventData.subcalendar_ids || [];
@@ -51,36 +127,26 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
       html: zoomLink
     };
     
-    // Create a copy of all event data
-    const updateData = { ...eventData };
-    
-    // Update only the fields we want to change
-    updateData.custom = customFields;
-    updateData.subcalendar_ids = finalSubcalendarIds;
-    updateData.subcalendar_id = finalSubcalendarIds[0];
-    
-    // For recurring events, we need to check what approach to use
+    // Try a simpler approach for recurring events - avoid updating the series pattern entirely
+    // Just update the custom field and preserve everything else
     const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
-    let updateUrl;
     
-    if (eventData.series_id) {
-      // If we have a series ID, try to update the entire series
-      updateUrl = `${baseUrl}/events/${eventData.series_id}`;
-      console.log(`Updating entire series with ID: ${eventData.series_id}`);
-      updateData.id = eventData.series_id;
-    } else {
-      // Otherwise try using the standard approach
-      updateUrl = `${baseUrl}/events/${eventData.id}`;
-      console.log(`Updating single occurrence with ID: ${eventData.id}`);
-      updateData.id = eventData.id;
-    }
+    // Instead of updating the recurring event itself, let's just update the zoom link field separately
+    // This is a partial update approach that should avoid changing recurrence fields
+    console.log(`Performing partial update to add Zoom link only`);
     
-    console.log(`Updating recurring event with payload:`, JSON.stringify(updateData, null, 2));
+    // Only include the essential fields needed
+    const updateData = {
+      id: eventData.id,
+      custom: customFields
+    };
+    
+    console.log(`Updating event with payload:`, JSON.stringify(updateData, null, 2));
     
     try {
       // Make the API request to update the event
-      const updateResponse = await axios.put(
-        updateUrl,
+      const updateResponse = await axios.patch(
+        `${baseUrl}/events/${eventData.id}`,
         updateData,
         {
           headers: {
@@ -94,17 +160,17 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
       console.log(`Response data: ${JSON.stringify(updateResponse.data || {})}`);
       return true;
     } catch (axiosError) {
+      // If PATCH is not supported, try the full update as a fallback
+      if (axiosError.response && (axiosError.response.status === 405 || axiosError.response.status === 404)) {
+        console.log(`PATCH not supported, trying full update...`);
+        return await fallbackUpdateRecurringEvent(eventData, customFields, finalSubcalendarIds);
+      }
+      
       console.error('❌ API request failed:', axiosError.message);
       
       if (axiosError.response) {
         console.error('Response status:', axiosError.response.status);
         console.error('Response data:', JSON.stringify(axiosError.response.data || {}));
-        
-        // If the series update fails, try updating the single occurrence
-        if (eventData.series_id && axiosError.response.status === 404) {
-          console.log('Series update failed, trying to update single occurrence...');
-          return await updateSingleOccurrence(eventData, zoomLink);
-        }
       }
       
       return false;
@@ -115,33 +181,37 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
   }
 }
 
-// Helper function to update a single occurrence if series update fails
-async function updateSingleOccurrence(eventData, zoomLink) {
+// Fallback function for updating recurring events
+async function fallbackUpdateRecurringEvent(eventData, customFields, finalSubcalendarIds) {
   try {
-    console.log(`Attempting to update single occurrence of recurring event ${eventData.id}...`);
-    
     const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
     
-    // Create a copy of all event data
-    const updateData = { ...eventData };
-    
-    // Create a proper copy of the custom fields
-    const customFields = {};
-    if (eventData.custom) {
-      Object.keys(eventData.custom).forEach(key => {
-        customFields[key] = eventData.custom[key];
-      });
-    }
-    
-    // Update our specific custom field with raw link
-    customFields[CUSTOM_FIELD_NAME] = {
-      html: zoomLink
+    // For a full update, we need to set ristart_dt if it's null
+    // Using a simpler payload structure to avoid recurrence issues
+    const updateData = {
+      id: eventData.id,
+      start_dt: eventData.start_dt,
+      end_dt: eventData.end_dt,
+      title: eventData.title,
+      subcalendar_id: finalSubcalendarIds[0], 
+      subcalendar_ids: finalSubcalendarIds,  
+      custom: customFields
     };
     
-    // Update the custom fields in our data copy
-    updateData.custom = customFields;
+    // If it's a recurring event (has rrule), add the ristart_dt field
+    if (eventData.rrule) {
+      // Use start_dt as ristart_dt if ristart_dt is null
+      updateData.ristart_dt = eventData.start_dt;
+    }
     
-    console.log(`Updating single occurrence with payload:`, JSON.stringify(updateData, null, 2));
+    // Also include other important fields if they exist
+    if (eventData.who) updateData.who = eventData.who;
+    if (eventData.location) updateData.location = eventData.location;
+    if (eventData.notes) updateData.notes = eventData.notes;
+    if (eventData.tz) updateData.tz = eventData.tz;
+    if (eventData.all_day !== undefined) updateData.all_day = eventData.all_day;
+    
+    console.log(`Fallback update with payload:`, JSON.stringify(updateData, null, 2));
     
     const updateResponse = await axios.put(
       `${baseUrl}/events/${eventData.id}`,
@@ -157,7 +227,7 @@ async function updateSingleOccurrence(eventData, zoomLink) {
     console.log(`API response status: ${updateResponse.status}`);
     return true;
   } catch (error) {
-    console.error('❌ Error updating single occurrence:', error.message);
+    console.error('❌ Error in fallback update:', error.message);
     return false;
   }
 }// Teamup Webhook Handler
@@ -251,7 +321,6 @@ const CALENDAR_ID = getEnv('CALENDAR_ID');
 
 // Map of sub-calendar IDs to specific Zoom links
 const SUB_CALENDAR_ZOOM_LINKS = {
-  // Add your actual subcalendar ID from the logs (14156325)
   '14098383': 'New Coffee Shop: https://zoom.us/j/123456789',
   '14098359': 'Integrity Group AKA Saturday Morning Workshop<br>\n<a href="https://us02web.zoom.us/j/82971629914?pwd=ajZBSkI4bmZjWVZpSXBmenJlMXhUUT09">https://us02web.zoom.us/j/82971629914?pwd=ajZBSkI4bmZjWVZpSXBmenJlMXhUUT09</a><br>\nMeeting ID: 829 7162 9914<br>\nPasscode: xs11Aw<br>\nCall in +13462487799<br>\nPassword: 836591<br>\nHost code: 983273<br>\nOne tap mobile +13462487799,82971629914,#,#,,836591# US (Houston)',
   '14098366': 'DJ Zoom: https://zoom.us/j/123456789',
@@ -260,10 +329,6 @@ const SUB_CALENDAR_ZOOM_LINKS = {
   '14098358': 'SWeT Zoom: https://zoom.us/j/123456789',
   '14132335': 'Soul Train: https://zoom.us/j/123456789',
   '14098400': 'Sober Lounge: https://zoom.us/j/123456789',
-  
-  // Keep these as examples/backups
-  '12345': 'Zoom Link for Team A: https://zoom.us/j/123456789',
-  '67890': 'Zoom Link for Team B: https://zoom.us/j/987654321',
 };
 
 // Configure the name of the custom field to update
