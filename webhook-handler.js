@@ -93,26 +93,8 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
       return false;
     }
     
-    // Handle multiple subcalendars properly
-    const currentSubcalendarIds = eventData.subcalendar_ids || [];
-    console.log("Current subcalendar IDs:", currentSubcalendarIds);
-    
-    // Convert our SUB_CALENDAR_ZOOM_LINKS keys to numbers for consistent comparison
-    const ourSubcalendarIds = Object.keys(SUB_CALENDAR_ZOOM_LINKS).map(id => Number(id));
-    
-    // Filter subcalendar IDs:
-    // 1. Keep all subcalendars NOT in our list
-    // 2. Keep ONE subcalendar from our list (the one that triggered this webhook)
-    const managedIds = currentSubcalendarIds.filter(id => ourSubcalendarIds.includes(id));
-    const otherIds = currentSubcalendarIds.filter(id => !ourSubcalendarIds.includes(id));
-    
-    // If we have managed IDs, keep the first one (should be the triggering ID)
-    const keepOneId = managedIds.length > 0 ? [managedIds[0]] : [];
-    
-    // Combine: IDs we're not managing + one ID we are managing
-    const finalSubcalendarIds = [...otherIds, ...keepOneId];
-    
-    console.log("Filtered subcalendar IDs:", finalSubcalendarIds);
+    // For recurring events, we'll use a special approach
+    // Instead of trying to update the recurrence pattern, we'll just update the custom field
     
     // Create a proper copy of the custom fields
     const customFields = {};
@@ -131,21 +113,32 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
     // Just update the custom field and preserve everything else
     const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
     
-    // Instead of updating the recurring event itself, let's just update the zoom link field separately
-    // This is a partial update approach that should avoid changing recurrence fields
-    console.log(`Performing partial update to add Zoom link only`);
-    
-    // Only include the essential fields needed
+    // Only include the absolutely essential fields needed
+    // For recurring events, we must include ALL time-related fields
     const updateData = {
       id: eventData.id,
+      title: eventData.title,
+      start_dt: eventData.start_dt,
+      end_dt: eventData.end_dt,
+      subcalendar_id: eventData.subcalendar_id, // Keep original subcalendar
+      rrule: eventData.rrule,
       custom: customFields
     };
     
-    console.log(`Updating event with payload:`, JSON.stringify(updateData, null, 2));
+    // Add all time-related fields if they exist
+    if (eventData.ristart_dt) updateData.ristart_dt = eventData.ristart_dt;
+    if (eventData.rsstart_dt) updateData.rsstart_dt = eventData.rsstart_dt;
+    
+    // If ristart_dt is null but we have a recurrence rule (rrule), set ristart_dt to start_dt
+    if (!updateData.ristart_dt && eventData.rrule) {
+      updateData.ristart_dt = eventData.start_dt;
+    }
+    
+    console.log(`Updating recurring event with payload:`, JSON.stringify(updateData, null, 2));
     
     try {
       // Make the API request to update the event
-      const updateResponse = await axios.patch(
+      const updateResponse = await axios.put(
         `${baseUrl}/events/${eventData.id}`,
         updateData,
         {
@@ -160,17 +153,22 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
       console.log(`Response data: ${JSON.stringify(updateResponse.data || {})}`);
       return true;
     } catch (axiosError) {
-      // If PATCH is not supported, try the full update as a fallback
-      if (axiosError.response && (axiosError.response.status === 405 || axiosError.response.status === 404)) {
-        console.log(`PATCH not supported, trying full update...`);
-        return await fallbackUpdateRecurringEvent(eventData, customFields, finalSubcalendarIds);
-      }
-      
       console.error('❌ API request failed:', axiosError.message);
       
       if (axiosError.response) {
         console.error('Response status:', axiosError.response.status);
         console.error('Response data:', JSON.stringify(axiosError.response.data || {}));
+        
+        // Log more details about the error
+        if (axiosError.response.data?.error) {
+          console.error('Error details:', axiosError.response.data.error);
+        }
+        
+        // Try one more approach if we have a specific error
+        const errorId = axiosError.response.data?.error?.id;
+        if (errorId) {
+          return await lastResortUpdate(eventData, zoomLink, errorId);
+        }
       }
       
       return false;
@@ -181,37 +179,47 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
   }
 }
 
-// Fallback function for updating recurring events
-async function fallbackUpdateRecurringEvent(eventData, customFields, finalSubcalendarIds) {
+// Last resort update approach
+async function lastResortUpdate(eventData, zoomLink, errorId) {
   try {
+    console.log(`Attempting last resort update for error: ${errorId}`);
+    
     const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
     
-    // For a full update, we need to set ristart_dt if it's null
-    // Using a simpler payload structure to avoid recurrence issues
+    // Create a proper copy of the custom fields
+    const customFields = {};
+    if (eventData.custom) {
+      Object.keys(eventData.custom).forEach(key => {
+        customFields[key] = eventData.custom[key];
+      });
+    }
+    
+    // Update our specific custom field with the raw link value
+    customFields[CUSTOM_FIELD_NAME] = {
+      html: zoomLink
+    };
+    
+    // Create a very minimal payload - just the absolute essentials
     const updateData = {
       id: eventData.id,
+      title: eventData.title,
       start_dt: eventData.start_dt,
       end_dt: eventData.end_dt,
-      title: eventData.title,
-      subcalendar_id: finalSubcalendarIds[0], 
-      subcalendar_ids: finalSubcalendarIds,  
+      subcalendar_id: eventData.subcalendar_id,
       custom: customFields
     };
     
-    // If it's a recurring event (has rrule), add the ristart_dt field
-    if (eventData.rrule) {
-      // Use start_dt as ristart_dt if ristart_dt is null
+    // Special handling for specific errors
+    if (errorId === 'incomplete_request' || errorId === 'event_missing_start_end_datetime') {
       updateData.ristart_dt = eventData.start_dt;
+      
+      // If start_dt and end_dt are in different time zones, normalize them
+      if (eventData.tz) {
+        updateData.tz = eventData.tz;
+      }
     }
     
-    // Also include other important fields if they exist
-    if (eventData.who) updateData.who = eventData.who;
-    if (eventData.location) updateData.location = eventData.location;
-    if (eventData.notes) updateData.notes = eventData.notes;
-    if (eventData.tz) updateData.tz = eventData.tz;
-    if (eventData.all_day !== undefined) updateData.all_day = eventData.all_day;
-    
-    console.log(`Fallback update with payload:`, JSON.stringify(updateData, null, 2));
+    console.log(`Last resort update with payload:`, JSON.stringify(updateData, null, 2));
     
     const updateResponse = await axios.put(
       `${baseUrl}/events/${eventData.id}`,
@@ -227,7 +235,14 @@ async function fallbackUpdateRecurringEvent(eventData, customFields, finalSubcal
     console.log(`API response status: ${updateResponse.status}`);
     return true;
   } catch (error) {
-    console.error('❌ Error in fallback update:', error.message);
+    console.error('❌ Last resort update failed:', error.message);
+    
+    // Log the full error details
+    if (error.response) {
+      console.error('Status:', error.response.status);
+      console.error('Error data:', JSON.stringify(error.response.data || {}));
+    }
+    
     return false;
   }
 }// Teamup Webhook Handler
