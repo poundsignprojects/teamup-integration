@@ -24,7 +24,13 @@ app.use(bodyParser.json());
 // Endpoint to receive Teamup webhooks
 app.post('/webhook', async (req, res) => {
   try {
+    console.log('🔔 Webhook triggered at:', new Date().toISOString());
+    
     const eventData = req.body;
+    
+    // Log the complete webhook payload
+    console.log('📦 Webhook payload:');
+    console.log(JSON.stringify(eventData, null, 2));
     
     // Check if this is an event creation or update
     if (eventData.action === 'event.create' || eventData.action === 'event.update') {
@@ -37,16 +43,27 @@ app.post('/webhook', async (req, res) => {
       if (zoomLink) {
         // Update the event with the Zoom link
         await updateEventZoomLink(eventId, zoomLink);
-        console.log(`Updated event ${eventId} with Zoom link for sub-calendar ${subCalendarId}`);
+        console.log(`✅ Updated event ${eventId} with Zoom link for sub-calendar ${subCalendarId}`);
       } else {
-        console.log(`No Zoom link configured for sub-calendar ${subCalendarId}`);
+        console.log(`⚠️ No Zoom link configured for sub-calendar ${subCalendarId}`);
+      }
+      
+      // Log event fields for detailed debugging
+      console.log('🔍 Event details:');
+      for (const [key, value] of Object.entries(eventData.event)) {
+        console.log(`  ${key}: ${JSON.stringify(value)}`);
       }
     }
     
     // Always return a 200 response to Teamup quickly
     res.status(200).send('Webhook received');
   } catch (error) {
-    console.error('Error processing webhook:', error);
+    console.error('❌ Error processing webhook:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      requestBody: req.body
+    });
     // Still return 200 to acknowledge receipt
     res.status(200).send('Webhook received with errors');
   }
