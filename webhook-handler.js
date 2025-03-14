@@ -406,9 +406,30 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
       // This updates only the current instance, not the entire series
       updateData.redit = 'single';
       
-      // If ristart_dt is available, include it for proper instance identification
+      // According to Teamup API error, ristart_dt is required for recurring events
+      // If ristart_dt is available in the original data, use it
       if (eventData.ristart_dt) {
         updateData.ristart_dt = eventData.ristart_dt;
+      } 
+      // If not available in the original data but we have an ID with a timestamp part, extract it
+      else if (eventData.id.includes('-rid-')) {
+        const timestampPart = eventData.id.split('-rid-')[1];
+        if (timestampPart) {
+          // Convert the timestamp to a proper ISO date string
+          const timestamp = parseInt(timestampPart);
+          if (!isNaN(timestamp)) {
+            const date = new Date(timestamp * 1000);
+            updateData.ristart_dt = date.toISOString();
+            console.log(`Extracted ristart_dt from event ID: ${updateData.ristart_dt}`);
+          }
+        }
+      }
+      
+      // If we still don't have ristart_dt and have start_dt, use that
+      // This is a fallback, but might not work correctly for all scenarios
+      if (!updateData.ristart_dt && eventData.start_dt) {
+        console.log(`No ristart_dt available, using start_dt as fallback`);
+        updateData.ristart_dt = eventData.start_dt;
       }
     }
     
@@ -485,6 +506,20 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
             if (eventData.start_dt) minimalData.start_dt = eventData.start_dt;
             if (eventData.end_dt) minimalData.end_dt = eventData.end_dt;
             if (eventData.title) minimalData.title = eventData.title;
+            
+            // ristart_dt is required for recurring events according to API error
+            if (updateData.ristart_dt) {
+              minimalData.ristart_dt = updateData.ristart_dt;
+            } else if (eventData.id.includes('-rid-')) {
+              const timestampPart = eventData.id.split('-rid-')[1];
+              if (timestampPart) {
+                const timestamp = parseInt(timestampPart);
+                if (!isNaN(timestamp)) {
+                  const date = new Date(timestamp * 1000);
+                  minimalData.ristart_dt = date.toISOString();
+                }
+              }
+            }
             
             console.log(`Retrying with minimal payload:`, JSON.stringify(minimalData, null, 2));
             
