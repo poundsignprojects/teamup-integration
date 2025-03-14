@@ -371,107 +371,96 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
     const isInstanceId = String(eventData.id).includes('-rid-');
     console.log(`Is this an instance ID? ${isInstanceId}`);
     
-    // According to Teamup support, we need to:
-    // 1. Include series_id which is the integer value of the event ID
-    // 2. Use the proper instance ID format (original_id-rid-timestamp) when needed
-    
-    // Method recommended by Teamup support for recurring events
-    try {
-      console.log(`Trying Teamup's recommended method for recurring events`);
-      
-      // Create a proper copy of the custom fields
-      const customFields = {};
-      if (eventData.custom) {
-        Object.keys(eventData.custom).forEach(key => {
-          customFields[key] = eventData.custom[key];
-        });
-      }
-      
-      // Update our specific custom field
-      customFields[CUSTOM_FIELD_NAME] = {
-        html: zoomLink
-      };
-      
-      // Get a numeric event ID (remove any -rid- suffix)
-      const baseEventId = parseInt(eventData.id.split('-rid-')[0]);
-      
-      // Construct the proper instance ID if needed
-      let instanceId = eventData.id;
-      if (eventData.start_dt && !isInstanceId) {
-        // Convert start_dt to a timestamp (assuming ISO format)
-        const startDate = new Date(eventData.start_dt);
-        const timestamp = Math.floor(startDate.getTime() / 1000);
-        instanceId = `${eventData.id}-rid-${timestamp}`;
-        console.log(`Constructed instance ID: ${instanceId}`);
-      }
-      
-      // Create update payload with all required fields
-      const updateData = {
-        id: instanceId,
-        start_dt: eventData.start_dt,
-        end_dt: eventData.end_dt,
-        title: eventData.title || '',
-        subcalendar_id: eventData.subcalendar_id,
-        custom: customFields,
-        // Add series_id for recurring events (per Teamup support)
-        series_id: baseEventId
-      };
-      
-      // Add recurring event fields if this is a recurring event
-      if (eventData.rrule) {
-        updateData.rrule = eventData.rrule;
-        // If we have ristart_dt, include it
-        if (eventData.ristart_dt) {
-          updateData.ristart_dt = eventData.ristart_dt;
-        } else if (eventData.start_dt) {
-          updateData.ristart_dt = eventData.start_dt;
-        }
-        // Specify we're only updating this single occurrence
-        updateData.redit = 'single';
-      }
-      
-      // Include version if available
-      if (eventData.version) {
-        updateData.version = eventData.version;
-      }
-      
-      console.log(`Update payload using Teamup's guidance:`, JSON.stringify(updateData, null, 2));
-      
-      const response = await axios.put(
-        `${baseUrl}/events/${eventData.id}`,
-        updateData,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Teamup-Token': TEAMUP_API_KEY
-          }
-        }
-      );
-      
-      console.log(`Update successful! Status: ${response.status}`);
-      return true;
-    } catch (error) {
-      console.log(`Update failed: ${error.message}`);
-      
-      if (error.response) {
-        console.log(`Status: ${error.response.status}, Error:`, 
-          error.response.data?.error || 'Unknown error');
-      }
-      
-      // If we reach this point, all methods have failed
-      console.error('❌ RECURRING EVENT UPDATE FAILED');
-      console.error('DIAGNOSTICS:');
-      console.error(`Event ID: ${eventData.id}`);
-      console.error(`RRULE: ${eventData.rrule || 'Not found'}`);
-      console.error(`Start: ${eventData.start_dt || 'Not found'}`);
-      console.error(`End: ${eventData.end_dt || 'Not found'}`);
-      console.error(`Title: ${eventData.title || 'Not found'}`);
-      console.error(`SubCalendar: ${eventData.subcalendar_id || 'Not found'}`);
-      
-      return false;
+    // Create a proper copy of the custom fields
+    const customFields = {};
+    if (eventData.custom) {
+      Object.keys(eventData.custom).forEach(key => {
+        customFields[key] = eventData.custom[key];
+      });
     }
+    
+    // Update our specific custom field
+    customFields[CUSTOM_FIELD_NAME] = {
+      html: zoomLink
+    };
+    
+    // Get a numeric event ID (remove any -rid- suffix)
+    const baseEventId = parseInt(eventData.id.split('-rid-')[0]);
+    
+    // Construct the proper instance ID if needed
+    let instanceId = eventData.id;
+    if (eventData.start_dt && !isInstanceId) {
+      // Convert start_dt to a timestamp (assuming ISO format)
+      const startDate = new Date(eventData.start_dt);
+      const timestamp = Math.floor(startDate.getTime() / 1000);
+      instanceId = `${eventData.id}-rid-${timestamp}`;
+      console.log(`Constructed instance ID: ${instanceId}`);
+    }
+    
+    // Create update payload with all required fields
+    const updateData = {
+      id: instanceId,  // The ID in the body
+      start_dt: eventData.start_dt,
+      end_dt: eventData.end_dt,
+      title: eventData.title || '',
+      subcalendar_id: eventData.subcalendar_id,
+      custom: customFields,
+      // Add series_id for recurring events (per Teamup support)
+      series_id: baseEventId
+    };
+    
+    // Add recurring event fields if this is a recurring event
+    if (eventData.rrule) {
+      updateData.rrule = eventData.rrule;
+      // If we have ristart_dt, include it
+      if (eventData.ristart_dt) {
+        updateData.ristart_dt = eventData.ristart_dt;
+      } else if (eventData.start_dt) {
+        updateData.ristart_dt = eventData.start_dt;
+      }
+      // Specify we're only updating this single occurrence
+      updateData.redit = 'single';
+    }
+    
+    // Include version if available
+    if (eventData.version) {
+      updateData.version = eventData.version;
+    }
+    
+    console.log(`Update payload using Teamup's guidance:`, JSON.stringify(updateData, null, 2));
+    
+    // CRITICAL FIX: Use the SAME ID in the URL path as in the request body's 'id' field
+    const response = await axios.put(
+      `${baseUrl}/events/${instanceId}`,  // Use instanceId here, not eventData.id
+      updateData,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Teamup-Token': TEAMUP_API_KEY
+        }
+      }
+    );
+    
+    console.log(`Update successful! Status: ${response.status}`);
+    return true;
   } catch (error) {
-    console.error(`❌ Error in updateRecurringEventZoomLink: ${error.message}`);
+    console.log(`Update failed: ${error.message}`);
+    
+    if (error.response) {
+      console.log(`Status: ${error.response.status}, Error:`, 
+        error.response.data?.error || 'Unknown error');
+    }
+    
+    // If we reach this point, the update failed
+    console.error('❌ RECURRING EVENT UPDATE FAILED');
+    console.error('DIAGNOSTICS:');
+    console.error(`Event ID: ${eventData.id}`);
+    console.error(`RRULE: ${eventData.rrule || 'Not found'}`);
+    console.error(`Start: ${eventData.start_dt || 'Not found'}`);
+    console.error(`End: ${eventData.end_dt || 'Not found'}`);
+    console.error(`Title: ${eventData.title || 'Not found'}`);
+    console.error(`SubCalendar: ${eventData.subcalendar_id || 'Not found'}`);
+    
     return false;
   }
 }
