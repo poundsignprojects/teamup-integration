@@ -367,9 +367,11 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
     
     const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
     
-    // Parse the ID to check if it's already an instance ID
-    const isInstanceId = String(eventData.id).includes('-rid-');
-    console.log(`Is this an instance ID? ${isInstanceId}`);
+    // Parse the event ID for the series_id
+    // Ensure it's a numeric value as per Teamup support
+    const baseEventId = parseInt(eventData.id.split('-rid-')[0]); 
+    
+    console.log(`Trying to update recurring event with series_id: ${baseEventId}`);
     
     // Create a proper copy of the custom fields
     const customFields = {};
@@ -384,82 +386,179 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
       html: zoomLink
     };
     
-    // Get a numeric event ID (remove any -rid- suffix)
-    const baseEventId = parseInt(eventData.id.split('-rid-')[0]);
-    
-    // Construct the proper instance ID if needed
-    let instanceId = eventData.id;
-    if (eventData.start_dt && !isInstanceId) {
-      // Convert start_dt to a timestamp (assuming ISO format)
-      const startDate = new Date(eventData.start_dt);
-      const timestamp = Math.floor(startDate.getTime() / 1000);
-      instanceId = `${eventData.id}-rid-${timestamp}`;
-      console.log(`Constructed instance ID: ${instanceId}`);
-    }
-    
-    // Create update payload with all required fields
+    // Create update payload exactly like Teamup support's example
     const updateData = {
-      id: instanceId,  // The ID in the body
+      id: eventData.id, // Use the original event ID, not the instance ID
+      series_id: baseEventId, // This is the critical field per Teamup support
       start_dt: eventData.start_dt,
       end_dt: eventData.end_dt,
       title: eventData.title || '',
       subcalendar_id: eventData.subcalendar_id,
-      custom: customFields,
-      // Add series_id for recurring events (per Teamup support)
-      series_id: baseEventId
+      custom: customFields
     };
     
     // Add recurring event fields if this is a recurring event
     if (eventData.rrule) {
       updateData.rrule = eventData.rrule;
-      // If we have ristart_dt, include it
+      
+      // If we have ristart_dt, include it (important for recurring events)
       if (eventData.ristart_dt) {
         updateData.ristart_dt = eventData.ristart_dt;
       } else if (eventData.start_dt) {
+        // Use start_dt as ristart_dt if not provided
         updateData.ristart_dt = eventData.start_dt;
       }
+      
       // Specify we're only updating this single occurrence
       updateData.redit = 'single';
     }
     
-    // Include version if available
+    // Include version if available for concurrency control
     if (eventData.version) {
       updateData.version = eventData.version;
     }
     
-    console.log(`Update payload using Teamup's guidance:`, JSON.stringify(updateData, null, 2));
+    console.log(`Update payload:`, JSON.stringify(updateData, null, 2));
     
-    // CRITICAL FIX: Use the SAME ID in the URL path as in the request body's 'id' field
-    const response = await axios.put(
-      `${baseUrl}/events/${instanceId}`,  // Use instanceId here, not eventData.id
-      updateData,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Teamup-Token': TEAMUP_API_KEY
+    // ATTEMPT 1: Try exactly as in Teamup's example
+    try {
+      console.log(`Attempt 1: Using original event ID in both URL and body`);
+      
+      const response = await axios.put(
+        `${baseUrl}/events/${eventData.id}`,
+        updateData,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Teamup-Token': TEAMUP_API_KEY
+          }
+        }
+      );
+      
+      console.log(`Attempt 1 successful! Status: ${response.status}`);
+      return true;
+    } catch (attempt1Error) {
+      console.log(`Attempt 1 failed: ${attempt1Error.message}`);
+      console.log(`Status: ${attempt1Error.response?.status || 'unknown'}`);
+      console.log(`Error details:`, JSON.stringify(attempt1Error.response?.data || {}, null, 2));
+      
+      // ATTEMPT 2: Try without the redit parameter
+      try {
+        console.log(`Attempt 2: Without redit parameter`);
+        
+        // Create a copy without the redit parameter
+        const updateData2 = {...updateData};
+        delete updateData2.redit;
+        
+        console.log(`Attempt 2 payload:`, JSON.stringify(updateData2, null, 2));
+        
+        const response2 = await axios.put(
+          `${baseUrl}/events/${eventData.id}`,
+          updateData2,
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'Teamup-Token': TEAMUP_API_KEY
+            }
+          }
+        );
+        
+        console.log(`Attempt 2 successful! Status: ${response2.status}`);
+        return true;
+      } catch (attempt2Error) {
+        console.log(`Attempt 2 failed: ${attempt2Error.message}`);
+        console.log(`Status: ${attempt2Error.response?.status || 'unknown'}`);
+        console.log(`Error details:`, JSON.stringify(attempt2Error.response?.data || {}, null, 2));
+        
+        // ATTEMPT 3: Try with redit=future instead of single
+        try {
+          console.log(`Attempt 3: With redit=future`);
+          
+          // Create a copy with redit=future
+          const updateData3 = {...updateData, redit: 'future'};
+          
+          console.log(`Attempt 3 payload:`, JSON.stringify(updateData3, null, 2));
+          
+          const response3 = await axios.put(
+            `${baseUrl}/events/${eventData.id}`,
+            updateData3,
+            {
+              headers: {
+                'Content-Type': 'application/json',
+                'Teamup-Token': TEAMUP_API_KEY
+              }
+            }
+          );
+          
+          console.log(`Attempt 3 successful! Status: ${response3.status}`);
+          return true;
+        } catch (attempt3Error) {
+          console.log(`Attempt 3 failed: ${attempt3Error.message}`);
+          console.log(`Status: ${attempt3Error.response?.status || 'unknown'}`);
+          console.log(`Error details:`, JSON.stringify(attempt3Error.response?.data || {}, null, 2));
+          
+          // ATTEMPT 4: Try with minimal fields
+          try {
+            console.log(`Attempt 4: Minimal fields`);
+            
+            // Create a minimal payload with just the essential fields
+            const minimalData = {
+              id: eventData.id,
+              series_id: baseEventId,
+              custom: {
+                [CUSTOM_FIELD_NAME]: {
+                  html: zoomLink
+                }
+              }
+            };
+            
+            // These fields are required
+            if (eventData.start_dt) minimalData.start_dt = eventData.start_dt;
+            if (eventData.end_dt) minimalData.end_dt = eventData.end_dt;
+            if (eventData.subcalendar_id) minimalData.subcalendar_id = eventData.subcalendar_id;
+            
+            console.log(`Attempt 4 payload:`, JSON.stringify(minimalData, null, 2));
+            
+            const response4 = await axios.put(
+              `${baseUrl}/events/${eventData.id}`,
+              minimalData,
+              {
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Teamup-Token': TEAMUP_API_KEY
+                }
+              }
+            );
+            
+            console.log(`Attempt 4 successful! Status: ${response4.status}`);
+            return true;
+          } catch (attempt4Error) {
+            console.log(`Attempt 4 failed: ${attempt4Error.message}`);
+            console.log(`Status: ${attempt4Error.response?.status || 'unknown'}`);
+            console.log(`Error details:`, JSON.stringify(attempt4Error.response?.data || {}, null, 2));
+            
+            // All attempts failed
+            console.error('❌ ALL ATTEMPTS FAILED');
+            return false;
+          }
         }
       }
-    );
-    
-    console.log(`Update successful! Status: ${response.status}`);
-    return true;
+    }
   } catch (error) {
-    console.log(`Update failed: ${error.message}`);
+    console.error(`❌ Unhandled error in updateRecurringEventZoomLink: ${error.message}`);
     
+    // Log all error details
     if (error.response) {
-      console.log(`Status: ${error.response.status}, Error:`, 
-        error.response.data?.error || 'Unknown error');
+      console.error(`Response status: ${error.response.status}`);
+      console.error(`Response data:`, JSON.stringify(error.response.data, null, 2));
     }
     
-    // If we reach this point, the update failed
-    console.error('❌ RECURRING EVENT UPDATE FAILED');
-    console.error('DIAGNOSTICS:');
-    console.error(`Event ID: ${eventData.id}`);
-    console.error(`RRULE: ${eventData.rrule || 'Not found'}`);
-    console.error(`Start: ${eventData.start_dt || 'Not found'}`);
-    console.error(`End: ${eventData.end_dt || 'Not found'}`);
-    console.error(`Title: ${eventData.title || 'Not found'}`);
-    console.error(`SubCalendar: ${eventData.subcalendar_id || 'Not found'}`);
+    if (error.config) {
+      console.error(`Request URL: ${error.config.url}`);
+      console.error(`Request method: ${error.config.method}`);
+      console.error(`Request headers:`, JSON.stringify(error.config.headers, null, 2));
+      console.error(`Request data:`, error.config.data);
+    }
     
     return false;
   }
