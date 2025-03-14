@@ -355,7 +355,7 @@ async function updateEventZoomLink(eventId, zoomLink) {
   }
 }
 
-// Function to handle recurring events using the three methods specified in the Teamup API docs
+// Function to handle recurring events using Teamup's recommended approach
 async function updateRecurringEventZoomLink(eventData, zoomLink) {
   try {
     console.log(`Handling recurring event with ID ${eventData.id}...`);
@@ -371,17 +371,15 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
     const isInstanceId = String(eventData.id).includes('-rid-');
     console.log(`Is this an instance ID? ${isInstanceId}`);
     
-    // Extract remote_id which is required for some update methods
-    const remoteId = eventData.remote_id;
-    const ristartDt = eventData.ristart_dt || eventData.start_dt;
+    // According to Teamup support, we need to:
+    // 1. Include series_id which is the integer value of the event ID
+    // 2. Use the proper instance ID format (original_id-rid-timestamp) when needed
     
-    console.log(`Remote ID: ${remoteId || 'Not found'}, ristart_dt: ${ristartDt || 'Not found'}`);
-    
-    // METHOD 1: Standard approach with event ID in path and body
-    // This is the first method described in the API docs
+    // Method recommended by Teamup support for recurring events
     try {
-      console.log(`Trying Method 1: Path parameter eventId + matching id in body`);
+      console.log(`Trying Teamup's recommended method for recurring events`);
       
+      // Create a proper copy of the custom fields
       const customFields = {};
       if (eventData.custom) {
         Object.keys(eventData.custom).forEach(key => {
@@ -394,22 +392,39 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
         html: zoomLink
       };
       
+      // Get a numeric event ID (remove any -rid- suffix)
+      const baseEventId = parseInt(eventData.id.split('-rid-')[0]);
+      
+      // Construct the proper instance ID if needed
+      let instanceId = eventData.id;
+      if (eventData.start_dt && !isInstanceId) {
+        // Convert start_dt to a timestamp (assuming ISO format)
+        const startDate = new Date(eventData.start_dt);
+        const timestamp = Math.floor(startDate.getTime() / 1000);
+        instanceId = `${eventData.id}-rid-${timestamp}`;
+        console.log(`Constructed instance ID: ${instanceId}`);
+      }
+      
       // Create update payload with all required fields
       const updateData = {
-        id: eventData.id,
+        id: instanceId,
         start_dt: eventData.start_dt,
         end_dt: eventData.end_dt,
         title: eventData.title || '',
-        subcalendar_id: eventData.subcalendar_id,  // Required field
-        custom: customFields
+        subcalendar_id: eventData.subcalendar_id,
+        custom: customFields,
+        // Add series_id for recurring events (per Teamup support)
+        series_id: baseEventId
       };
       
       // Add recurring event fields if this is a recurring event
       if (eventData.rrule) {
         updateData.rrule = eventData.rrule;
         // If we have ristart_dt, include it
-        if (ristartDt) {
-          updateData.ristart_dt = ristartDt;
+        if (eventData.ristart_dt) {
+          updateData.ristart_dt = eventData.ristart_dt;
+        } else if (eventData.start_dt) {
+          updateData.ristart_dt = eventData.start_dt;
         }
         // Specify we're only updating this single occurrence
         updateData.redit = 'single';
@@ -420,7 +435,7 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
         updateData.version = eventData.version;
       }
       
-      console.log(`Method 1 update payload:`, JSON.stringify(updateData, null, 2));
+      console.log(`Update payload using Teamup's guidance:`, JSON.stringify(updateData, null, 2));
       
       const response = await axios.put(
         `${baseUrl}/events/${eventData.id}`,
@@ -433,143 +448,25 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
         }
       );
       
-      console.log(`Method 1 successful! Status: ${response.status}`);
+      console.log(`Update successful! Status: ${response.status}`);
       return true;
-    } catch (method1Error) {
-      console.log(`Method 1 failed: ${method1Error.message}`);
+    } catch (error) {
+      console.log(`Update failed: ${error.message}`);
       
-      if (method1Error.response) {
-        console.log(`Status: ${method1Error.response.status}, Error:`, 
-          method1Error.response.data?.error || 'Unknown error');
-      }
-      
-      // If we don't have remote_id, we can't try methods 2 and 3
-      if (!remoteId) {
-        console.log(`Cannot proceed with Methods 2 and 3: Missing remote_id`);
-      } else {
-        // METHOD 2: Using remote_id + ristart_dt in the body
-        try {
-          console.log(`Trying Method 2: Using remote_id + ristart_dt in body`);
-          
-          const customFields = {};
-          if (eventData.custom) {
-            Object.keys(eventData.custom).forEach(key => {
-              customFields[key] = eventData.custom[key];
-            });
-          }
-          
-          // Update our specific custom field
-          customFields[CUSTOM_FIELD_NAME] = {
-            html: zoomLink
-          };
-          
-          // Create update payload with remote_id and ristart_dt
-          const updateData = {
-            remote_id: remoteId,
-            ristart_dt: ristartDt,
-            start_dt: eventData.start_dt,
-            end_dt: eventData.end_dt,
-            title: eventData.title || '',
-            subcalendar_id: eventData.subcalendar_id,
-            custom: customFields,
-            redit: 'single'  // Only update this instance
-          };
-          
-          // Include version if available
-          if (eventData.version) {
-            updateData.version = eventData.version;
-          }
-          
-          console.log(`Method 2 update payload:`, JSON.stringify(updateData, null, 2));
-          
-          const response = await axios.put(
-            `${baseUrl}/events/${eventData.id}`,  // Still use the same URL
-            updateData,
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                'Teamup-Token': TEAMUP_API_KEY
-              }
-            }
-          );
-          
-          console.log(`Method 2 successful! Status: ${response.status}`);
-          return true;
-        } catch (method2Error) {
-          console.log(`Method 2 failed: ${method2Error.message}`);
-          
-          if (method2Error.response) {
-            console.log(`Status: ${method2Error.response.status}, Error:`, 
-              method2Error.response.data?.error || 'Unknown error');
-          }
-          
-          // METHOD 3: Using eventId=0 with remoteId + startTime as query parameters
-          try {
-            console.log(`Trying Method 3: Using eventId=0 with remoteId + startTime as query params`);
-            
-            const customFields = {};
-            if (eventData.custom) {
-              Object.keys(eventData.custom).forEach(key => {
-                customFields[key] = eventData.custom[key];
-            });
-            }
-            
-            // Update our specific custom field
-            customFields[CUSTOM_FIELD_NAME] = {
-              html: zoomLink
-            };
-            
-            // Create update payload (without remote_id and ristart_dt)
-            const updateData = {
-              start_dt: eventData.start_dt,
-              end_dt: eventData.end_dt,
-              title: eventData.title || '',
-              subcalendar_id: eventData.subcalendar_id,
-              custom: customFields,
-              redit: 'single'  // Only update this instance
-            };
-            
-            // Build the URL with query parameters
-            const updateUrl = `${baseUrl}/events/0?remoteId=${encodeURIComponent(remoteId)}&startTime=${encodeURIComponent(ristartDt)}`;
-            
-            console.log(`Method 3 URL: ${updateUrl}`);
-            console.log(`Method 3 update payload:`, JSON.stringify(updateData, null, 2));
-            
-            const response = await axios.put(
-              updateUrl,
-              updateData,
-              {
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Teamup-Token': TEAMUP_API_KEY
-                }
-              }
-            );
-            
-            console.log(`Method 3 successful! Status: ${response.status}`);
-            return true;
-          } catch (method3Error) {
-            console.log(`Method 3 failed: ${method3Error.message}`);
-            
-            if (method3Error.response) {
-              console.log(`Status: ${method3Error.response.status}, Error:`, 
-                method3Error.response.data?.error || 'Unknown error');
-            }
-          }
-        }
+      if (error.response) {
+        console.log(`Status: ${error.response.status}, Error:`, 
+          error.response.data?.error || 'Unknown error');
       }
       
       // If we reach this point, all methods have failed
-      console.error('❌ RECURRING EVENT UPDATE FAILED - ALL METHODS EXHAUSTED');
+      console.error('❌ RECURRING EVENT UPDATE FAILED');
       console.error('DIAGNOSTICS:');
       console.error(`Event ID: ${eventData.id}`);
-      console.error(`Remote ID: ${remoteId || 'Not found'}`);
       console.error(`RRULE: ${eventData.rrule || 'Not found'}`);
       console.error(`Start: ${eventData.start_dt || 'Not found'}`);
       console.error(`End: ${eventData.end_dt || 'Not found'}`);
       console.error(`Title: ${eventData.title || 'Not found'}`);
       console.error(`SubCalendar: ${eventData.subcalendar_id || 'Not found'}`);
-      console.error(`Error: The subcalendar likely has "no overlap" setting and treats instances of the same recurring event as overlapping.`);
       
       return false;
     }
