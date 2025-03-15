@@ -367,13 +367,71 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
     
     const baseUrl = `https://api.teamup.com/${CALENDAR_ID}`;
     
-    // Extract the numeric series_id from the event ID
-    // Ensure it's a numeric value as per Teamup support
-    const baseEventId = parseInt(eventData.id.split('-rid-')[0]); 
+    // Check if this is a master recurring event or an instance
+    const isRecurringInstance = eventData.id.includes('-rid-');
     
-    console.log(`Trying to update recurring event with series_id: ${baseEventId}`);
+    // Get the series ID (master event ID) 
+    let seriesId;
+    let instanceId = eventData.id;
     
-    // Create a proper copy of the custom fields
+    if (isRecurringInstance) {
+      // For a recurring instance, extract the series ID from the instance ID
+      seriesId = parseInt(eventData.id.split('-rid-')[0]);
+      console.log(`This is a recurring instance. Extracted series_id ${seriesId} from instance ID ${eventData.id}`);
+    } else {
+      // For a master recurring event, the series ID is the event ID itself
+      seriesId = parseInt(eventData.id);
+      
+      // If this is a master event but we have the rrule, we need to create an instance ID
+      // This is because Teamup appears to require instance IDs for editing recurring events
+      if (eventData.rrule && eventData.start_dt) {
+        // Create a timestamp from the start date
+        let startDate;
+        if (typeof eventData.start_dt === 'string') {
+          startDate = new Date(eventData.start_dt);
+        } else if (typeof eventData.start_dt === 'number') {
+          startDate = new Date(eventData.start_dt * 1000); // Convert Unix timestamp to milliseconds
+        }
+        
+        if (startDate && !isNaN(startDate.getTime())) {
+          const timestamp = Math.floor(startDate.getTime() / 1000); // Convert to seconds
+          instanceId = `${seriesId}-rid-${timestamp}`;
+          console.log(`Created instance ID ${instanceId} for master recurring event`);
+        }
+      }
+      
+      console.log(`This is a master recurring event with series_id ${seriesId}`);
+    }
+    
+    // Extract or create ristart_dt (recurrence instance start date)
+    let ristartDt = null;
+    
+    // 1. Try to extract from the instance ID
+    if (isRecurringInstance) {
+      const timestampPart = eventData.id.split('-rid-')[1];
+      if (timestampPart) {
+        const timestamp = parseInt(timestampPart);
+        if (!isNaN(timestamp)) {
+          const date = new Date(timestamp * 1000);
+          ristartDt = date.toISOString();
+          console.log(`Extracted ristart_dt from instance ID: ${ristartDt}`);
+        }
+      }
+    }
+    
+    // 2. Use provided ristart_dt if available
+    if (!ristartDt && eventData.ristart_dt) {
+      ristartDt = eventData.ristart_dt;
+      console.log(`Using provided ristart_dt: ${ristartDt}`);
+    }
+    
+    // 3. As last resort, use start_dt
+    if (!ristartDt && eventData.start_dt) {
+      ristartDt = eventData.start_dt;
+      console.log(`No ristart_dt available, using start_dt as fallback: ${ristartDt}`);
+    }
+    
+    // Create a copy of the custom fields and update only the zoom_link2 field
     const customFields = {};
     if (eventData.custom) {
       Object.keys(eventData.custom).forEach(key => {
@@ -381,152 +439,96 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
       });
     }
     
-    // Update our specific custom field
     customFields[CUSTOM_FIELD_NAME] = {
       html: zoomLink
     };
     
-    // Create update payload with only the necessary fields
-    // We're being minimalist to avoid overwriting important recurrence settings
-    const updateData = {
-      id: eventData.id,              // Original event ID including the -rid- part
-      series_id: baseEventId,        // Critical field per Teamup support
-      start_dt: eventData.start_dt,  // Keep original start date of this instance
-      end_dt: eventData.end_dt,      // Keep original end date of this instance
-      title: eventData.title || '',  // Required field
-      subcalendar_id: eventData.subcalendar_id, // Required field
-      custom: customFields           // Only updating the custom field
-    };
-    
-    // Carefully preserve the recurrence rule if it exists
-    if (eventData.rrule) {
-      updateData.rrule = eventData.rrule;
-      
-      // Always use 'single' mode for recurring events to avoid modifying the pattern
-      // This updates only the current instance, not the entire series
-      updateData.redit = 'single';
-      
-      // According to Teamup API error, ristart_dt is required for recurring events
-      // If ristart_dt is available in the original data, use it
-      if (eventData.ristart_dt) {
-        updateData.ristart_dt = eventData.ristart_dt;
-      } 
-      // If not available in the original data but we have an ID with a timestamp part, extract it
-      else if (eventData.id.includes('-rid-')) {
-        const timestampPart = eventData.id.split('-rid-')[1];
-        if (timestampPart) {
-          // Convert the timestamp to a proper ISO date string
-          const timestamp = parseInt(timestampPart);
-          if (!isNaN(timestamp)) {
-            const date = new Date(timestamp * 1000);
-            updateData.ristart_dt = date.toISOString();
-            console.log(`Extracted ristart_dt from event ID: ${updateData.ristart_dt}`);
-          }
-        }
-      }
-      
-      // If we still don't have ristart_dt and have start_dt, use that
-      // This is a fallback, but might not work correctly for all scenarios
-      if (!updateData.ristart_dt && eventData.start_dt) {
-        console.log(`No ristart_dt available, using start_dt as fallback`);
-        updateData.ristart_dt = eventData.start_dt;
-      }
-    }
-    
-    // Preserve all_day flag
-    if (eventData.all_day !== undefined) {
-      updateData.all_day = eventData.all_day;
-    }
-    
-    // Preserve timezone if it exists
-    if (eventData.tz) {
-      updateData.tz = eventData.tz;
-    }
-    
-    // Include version if available for concurrency control
-    if (eventData.version) {
-      updateData.version = eventData.version;
-    }
-    
-    // Copy over additional important fields if they exist
-    if (eventData.who) updateData.who = eventData.who;
-    if (eventData.location) updateData.location = eventData.location;
-    if (eventData.notes) updateData.notes = eventData.notes;
-    
-    console.log(`Update payload:`, JSON.stringify(updateData, null, 2));
-    
-    // Make the API request to update the event
+    // STEP 1: First try to get the current event to ensure we have all required fields
     try {
-      const response = await axios.put(
-        `${baseUrl}/events/${eventData.id}`,
-        updateData,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Teamup-Token': TEAMUP_API_KEY
-          }
+      console.log(`Getting current event details for ID: ${instanceId}`);
+      
+      const getResponse = await axios({
+        method: 'get',
+        url: `${baseUrl}/events/${instanceId}`,
+        headers: {
+          'Teamup-Token': TEAMUP_API_KEY
         }
-      );
+      });
       
-      console.log(`API response status: ${response.status}`);
+      const currentEvent = getResponse.data.event;
+      console.log(`Successfully retrieved event details. Version: ${currentEvent.version || 'N/A'}`);
       
-      if (response.data && response.data.event) {
-        console.log(`✅ Successfully updated recurring event instance ${eventData.id}`);
-        return true;
-      } else {
-        console.log(`⚠️ API call succeeded but returned unexpected data format`);
-        console.log(`Response data:`, JSON.stringify(response.data || {}));
-        return true; // Still consider it successful if the API returned 200
+      // Only modify the custom field with the zoom link
+      if (!currentEvent.custom) {
+        currentEvent.custom = {};
       }
-    } catch (apiError) {
-      // Log detailed error information for debugging
-      console.error(`❌ API request failed for recurring event: ${apiError.message}`);
+      currentEvent.custom[CUSTOM_FIELD_NAME] = { html: zoomLink };
       
-      if (apiError.response) {
-        console.error(`Error status: ${apiError.response.status}`);
-        console.error(`Error data:`, JSON.stringify(apiError.response.data || {}));
-        
-        // If we got a 400 with a specific error, try a different approach
-        if (apiError.response.status === 400) {
-          const errorId = apiError.response.data?.error?.id;
-          
-          if (errorId === 'event_overlapping') {
-            console.log(`Detected overlapping error. Trying alternative approach without rrule...`);
-            
-            // Create a simplified payload without rrule, focusing only on the custom field
-            const minimalData = {
-              id: eventData.id,
-              series_id: baseEventId,
-              subcalendar_id: eventData.subcalendar_id,
-              custom: customFields,
-              redit: 'single'
-            };
-            
-            // These fields are required
-            if (eventData.start_dt) minimalData.start_dt = eventData.start_dt;
-            if (eventData.end_dt) minimalData.end_dt = eventData.end_dt;
-            if (eventData.title) minimalData.title = eventData.title;
-            
-            // ristart_dt is required for recurring events according to API error
-            if (updateData.ristart_dt) {
-              minimalData.ristart_dt = updateData.ristart_dt;
-            } else if (eventData.id.includes('-rid-')) {
-              const timestampPart = eventData.id.split('-rid-')[1];
-              if (timestampPart) {
-                const timestamp = parseInt(timestampPart);
-                if (!isNaN(timestamp)) {
-                  const date = new Date(timestamp * 1000);
-                  minimalData.ristart_dt = date.toISOString();
-                }
-              }
+      // Construct a payload according to Teamup's instructions
+      // Include series_id (integer value of the event ID)
+      const updatePayload = {
+        id: instanceId,                  // Include the full instance ID with -rid- part
+        series_id: seriesId,             // As per Teamup support, use the integer value
+        redit: 'single',                 // Only update this specific instance
+        ristart_dt: ristartDt,           // Required for recurring events
+        custom: currentEvent.custom,     // Only change the custom fields
+        // Required fields
+        subcalendar_id: currentEvent.subcalendar_id,
+        title: currentEvent.title || '',
+        start_dt: currentEvent.start_dt,
+        end_dt: currentEvent.end_dt,
+        // Optional fields that should be preserved
+        version: currentEvent.version
+      };
+      
+      // Include other important fields if they exist in the current event
+      if (currentEvent.all_day !== undefined) updatePayload.all_day = currentEvent.all_day;
+      if (currentEvent.tz) updatePayload.tz = currentEvent.tz;
+      if (currentEvent.location) updatePayload.location = currentEvent.location;
+      if (currentEvent.who) updatePayload.who = currentEvent.who;
+      
+      // For the first attempt, specifically include the rrule if it exists
+      // to preserve the recurrence pattern
+      if (currentEvent.rrule) updatePayload.rrule = currentEvent.rrule;
+      
+      console.log(`Update payload:`, JSON.stringify(updatePayload, null, 2));
+      
+      // ATTEMPT 1: Full update following Teamup's recommendation
+      console.log(`ATTEMPT 1: Updating with full payload including rrule`);
+      try {
+        const updateResponse = await axios.put(
+          `${baseUrl}/events/${instanceId}`,
+          updatePayload,
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'Teamup-Token': TEAMUP_API_KEY
             }
+          }
+        );
+        
+        console.log(`✅ ATTEMPT 1 successful! Status: ${updateResponse.status}`);
+        return true;
+      } catch (error1) {
+        console.log(`❌ ATTEMPT 1 failed: ${error1.message}`);
+        if (error1.response) {
+          console.log(`Status: ${error1.response.status}`);
+          console.log(`Error data:`, JSON.stringify(error1.response.data || {}, null, 2));
+          
+          // ATTEMPT 2: If overlap error, try again without rrule
+          if (error1.response.data?.error?.id === 'event_overlapping') {
+            console.log(`Detected overlapping error. Trying without rrule...`);
             
-            console.log(`Retrying with minimal payload:`, JSON.stringify(minimalData, null, 2));
+            // Create a copy without the rrule
+            const updatePayloadNoRrule = {...updatePayload};
+            delete updatePayloadNoRrule.rrule;
+            
+            console.log(`ATTEMPT 2 payload:`, JSON.stringify(updatePayloadNoRrule, null, 2));
             
             try {
-              const retryResponse = await axios.put(
-                `${baseUrl}/events/${eventData.id}`,
-                minimalData,
+              const response2 = await axios.put(
+                `${baseUrl}/events/${instanceId}`,
+                updatePayloadNoRrule,
                 {
                   headers: {
                     'Content-Type': 'application/json',
@@ -535,20 +537,77 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
                 }
               );
               
-              console.log(`Retry successful! Status: ${retryResponse.status}`);
+              console.log(`✅ ATTEMPT 2 successful! Status: ${response2.status}`);
               return true;
-            } catch (retryError) {
-              console.error(`Alternative approach also failed:`, retryError.message);
-              if (retryError.response) {
-                console.error(`Retry error status: ${retryError.response.status}`);
-                console.error(`Retry error data:`, JSON.stringify(retryError.response.data || {}));
+            } catch (error2) {
+              console.log(`❌ ATTEMPT 2 failed: ${error2.message}`);
+              if (error2.response) {
+                console.log(`Status: ${error2.response.status}`);
+                console.log(`Error data:`, JSON.stringify(error2.response.data || {}, null, 2));
               }
-              return false;
+              
+              // ATTEMPT 3: Try with bare minimum fields
+              console.log(`ATTEMPT 3: Using absolute minimal payload`);
+              
+              const minimalPayload = {
+                id: instanceId,
+                series_id: seriesId,
+                subcalendar_id: currentEvent.subcalendar_id,
+                start_dt: currentEvent.start_dt,
+                end_dt: currentEvent.end_dt,
+                title: currentEvent.title || '',
+                custom: {
+                  [CUSTOM_FIELD_NAME]: { html: zoomLink }
+                },
+                ristart_dt: ristartDt,
+                redit: 'single'
+              };
+              
+              console.log(`ATTEMPT 3 payload:`, JSON.stringify(minimalPayload, null, 2));
+              
+              try {
+                const response3 = await axios.put(
+                  `${baseUrl}/events/${instanceId}`,
+                  minimalPayload,
+                  {
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Teamup-Token': TEAMUP_API_KEY
+                    }
+                  }
+                );
+                
+                console.log(`✅ ATTEMPT 3 successful! Status: ${response3.status}`);
+                return true;
+              } catch (error3) {
+                console.log(`❌ ATTEMPT 3 failed: ${error3.message}`);
+                if (error3.response) {
+                  console.log(`Status: ${error3.response.status}`);
+                  console.log(`Error data:`, JSON.stringify(error3.response.data || {}, null, 2));
+                }
+                
+                // Log the failure
+                console.error(`⚠️ ALL ATTEMPTS FAILED for event ${eventData.id} - unable to update Zoom link`);
+                console.error(`This appears to be a limitation of the Teamup API with recurring events on no-overlap calendars`);
+                return false;
+              }
             }
+          } else {
+            // If it's not an overlap error, just log the failure
+            console.error(`⚠️ Failed to update event. Non-overlap error encountered.`);
+            return false;
           }
+        } else {
+          console.error(`⚠️ Failed to update event. Network error encountered.`);
+          return false;
         }
       }
-      
+    } catch (getError) {
+      console.error(`❌ Failed to get event details: ${getError.message}`);
+      if (getError.response) {
+        console.error(`Status: ${getError.response.status}`);
+        console.error(`Error data:`, JSON.stringify(getError.response.data || {}, null, 2));
+      }
       return false;
     }
   } catch (error) {
