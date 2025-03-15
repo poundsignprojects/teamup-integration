@@ -469,8 +469,6 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
       const updatePayload = {
         id: instanceId,                  // Include the full instance ID with -rid- part
         series_id: seriesId,             // As per Teamup support, use the integer value
-        redit: 'single',                 // Only update this specific instance
-        ristart_dt: ristartDt,           // Required for recurring events
         custom: currentEvent.custom,     // Only change the custom fields
         // Required fields
         subcalendar_id: currentEvent.subcalendar_id,
@@ -481,15 +479,23 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
         version: currentEvent.version
       };
       
+      // Specific fields for recurring events
+      if (currentEvent.rrule) {
+        updatePayload.rrule = currentEvent.rrule;
+        updatePayload.ristart_dt = ristartDt;
+        
+        // Don't include redit parameter to preserve the series
+        // This is key - "redit: 'single'" might be causing the series to break
+      } else {
+        // For non-recurring events, no specific handling needed
+        console.log(`This appears to be a non-recurring event`);
+      }
+      
       // Include other important fields if they exist in the current event
       if (currentEvent.all_day !== undefined) updatePayload.all_day = currentEvent.all_day;
       if (currentEvent.tz) updatePayload.tz = currentEvent.tz;
       if (currentEvent.location) updatePayload.location = currentEvent.location;
       if (currentEvent.who) updatePayload.who = currentEvent.who;
-      
-      // For the first attempt, specifically include the rrule if it exists
-      // to preserve the recurrence pattern
-      if (currentEvent.rrule) updatePayload.rrule = currentEvent.rrule;
       
       console.log(`Update payload:`, JSON.stringify(updatePayload, null, 2));
       
@@ -523,6 +529,9 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
             const updatePayloadNoRrule = {...updatePayload};
             delete updatePayloadNoRrule.rrule;
             
+            // Also remove redit since it might be breaking the series
+            delete updatePayloadNoRrule.redit;
+            
             console.log(`ATTEMPT 2 payload:`, JSON.stringify(updatePayloadNoRrule, null, 2));
             
             try {
@@ -546,8 +555,8 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
                 console.log(`Error data:`, JSON.stringify(error2.response.data || {}, null, 2));
               }
               
-              // ATTEMPT 3: Try with bare minimum fields
-              console.log(`ATTEMPT 3: Using absolute minimal payload`);
+              // ATTEMPT 3: Try with bare minimum fields but preserving recurrence
+              console.log(`ATTEMPT 3: Using minimal payload but preserving recurrence pattern`);
               
               const minimalPayload = {
                 id: instanceId,
@@ -558,10 +567,14 @@ async function updateRecurringEventZoomLink(eventData, zoomLink) {
                 title: currentEvent.title || '',
                 custom: {
                   [CUSTOM_FIELD_NAME]: { html: zoomLink }
-                },
-                ristart_dt: ristartDt,
-                redit: 'single'
+                }
               };
+              
+              // Add required recurrence fields but don't use redit
+              if (currentEvent.rrule) {
+                minimalPayload.rrule = currentEvent.rrule;
+                minimalPayload.ristart_dt = ristartDt;
+              }
               
               console.log(`ATTEMPT 3 payload:`, JSON.stringify(minimalPayload, null, 2));
               
